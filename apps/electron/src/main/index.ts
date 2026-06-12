@@ -109,6 +109,7 @@ import { initializeBackendHostRuntime } from '@craft-agent/shared/agent/backend'
 import { setPowerShellValidatorRoot } from '@craft-agent/shared/agent'
 import { handleDeepLink } from './deep-link'
 import { BrowserPaneManager } from './browser-pane-manager'
+import { initializePluginHost, disposePluginHost } from './plugin-host'
 import { OAuthFlowStore } from '@craft-agent/shared/auth'
 import { registerThumbnailScheme, registerThumbnailHandler } from './thumbnail-protocol'
 import log, { isDebugMode, mainLog, getLogFilePath, getMessagingGatewayLogFilePath, messagingGatewayLog } from './logger'
@@ -477,6 +478,10 @@ app.whenReady().then(async () => {
     browserPaneManager.setWindowManager(windowManager)
     browserPaneManager.registerToolbarIpc()
     browserPaneManager.registerCapabilityIpc()
+
+    // Initialize plugin host before any window is created — window
+    // webPreferences (webviewTag) depend on enabled plugin permissions.
+    await initializePluginHost()
 
     // Build real PlatformServices from Electron APIs
     const platform: PlatformServices = createElectronPlatform({
@@ -1212,6 +1217,9 @@ app.on('before-quit', async (event) => {
     if (browserPaneManager) {
       browserPaneManager.destroyAll()
     }
+
+    // Deactivate plugins (disposes plugin IPC handlers and session hooks)
+    disposePluginHost()
 
     // Clean up OAuth flow store (stop periodic cleanup timer)
     if (oauthFlowStore) {

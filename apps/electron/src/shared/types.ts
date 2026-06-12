@@ -32,6 +32,10 @@ import type { ThinkingLevel } from '@craft-agent/shared/agent/thinking-levels';
 export type { ThinkingLevel };
 export { THINKING_LEVELS, DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels';
 
+// Plugin types
+import type { PluginInfo } from '@craft-agent/shared/plugins';
+export type { PluginInfo };
+
 export type {
   CoreMessage as Message,
   CoreMessageRole as MessageRole,
@@ -238,6 +242,18 @@ export interface ElectronAPI {
   getServerConfig(): Promise<import('@craft-agent/shared/config/server-config').ServerConfig>
   setServerConfig(config: import('@craft-agent/shared/config/server-config').ServerConfig): Promise<void>
   getServerStatus(): Promise<import('@craft-agent/shared/config/server-config').ServerStatus>
+
+  // Plugins (preload-local direct IPC — Electron-client feature, not WS-RPC)
+  plugins: {
+    /** All discovered plugins (built-in + external) with enablement and runtime status */
+    list(): Promise<PluginInfo[]>
+    /** Toggle a plugin. requiresRelaunch=true when the webviewTag window flag changed. */
+    setEnabled(id: string, enabled: boolean): Promise<{ ok: boolean; requiresRelaunch: boolean }>
+    /** Invoke a main-process handler registered by a plugin (requires 'ipc' permission) */
+    invoke(pluginId: string, channel: string, args?: unknown): Promise<unknown>
+    /** Listen for registry changes (enable/disable, activation errors). Returns cleanup. */
+    onChanged(callback: (plugins: PluginInfo[]) => void): () => void
+  }
 
   // App lifecycle
   relaunchApp(): Promise<void>
