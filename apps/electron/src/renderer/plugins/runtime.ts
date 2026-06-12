@@ -7,7 +7,10 @@
  * restart (the lone exception is the webviewTag window flag — see plugin-host).
  */
 
-import { PluginRegistry, type LoadedPlugin, type PluginDisposable } from '@craft-agent/shared/plugins'
+// Import from subpaths (not the package index) — the index re-exports
+// Node-only storage code that must stay out of the renderer bundle.
+import { PluginRegistry } from '@craft-agent/shared/plugins/registry'
+import type { LoadedPlugin, PluginDisposable } from '@craft-agent/shared/plugins/types'
 import { BUILTIN_PLUGIN_MANIFESTS } from '../../plugins/manifests'
 import { RENDERER_PLUGIN_ENTRIES } from '../../plugins/renderer-entries'
 import { createPluginContext } from './context'

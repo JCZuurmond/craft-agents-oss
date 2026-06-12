@@ -11,6 +11,7 @@ export {
   PLUGINS_CONFIG_VERSION,
   PLUGIN_WEBVIEW_PARTITION_PREFIX,
   getPluginWebviewPartition,
+  manifestHasPermission,
   type PluginPermission,
   type PluginEntries,
   type PluginManifest,
@@ -28,7 +29,6 @@ export {
 export {
   PluginManifestSchema,
   validatePluginManifest,
-  manifestHasPermission,
 } from './validation.ts';
 
 export {

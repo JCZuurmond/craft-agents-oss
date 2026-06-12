@@ -61,6 +61,8 @@
     "./mentions": "./src/mentions/index.ts",
     "./skills/types": "./src/skills/types.ts",
     "./plugins": "./src/plugins/index.ts",
+    "./plugins/types": "./src/plugins/types.ts",
+    "./plugins/registry": "./src/plugins/registry.ts",
     "./automations": "./src/automations/index.ts",
     "./automations/resolve-config-path": "./src/automations/resolve-config-path.ts",
     "./protocol": "./src/protocol/index.ts",

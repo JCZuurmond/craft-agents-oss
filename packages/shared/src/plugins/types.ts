@@ -142,3 +142,11 @@ export const PLUGIN_WEBVIEW_PARTITION_PREFIX = 'persist:craft-plugin-';
 export function getPluginWebviewPartition(pluginId: string): string {
   return `${PLUGIN_WEBVIEW_PARTITION_PREFIX}${pluginId}`;
 }
+
+/** Does the manifest declare a permission? */
+export function manifestHasPermission(
+  manifest: PluginManifest,
+  permission: PluginPermission,
+): boolean {
+  return manifest.permissions.includes(permission);
+}
