@@ -5,12 +5,14 @@
  * entry, and tracks every registration so deactivation can dispose them all.
  */
 
+// Import from the types subpath (not the package index) — the index re-exports
+// Node-only storage code that must stay out of the renderer bundle.
 import {
   manifestHasPermission,
   getPluginWebviewPartition,
   type PluginDisposable,
   type PluginManifest,
-} from '@craft-agent/shared/plugins'
+} from '@craft-agent/shared/plugins/types'
 import type { PluginContext, PluginLogger, PluginStorage, PluginUi } from './types'
 import { registerPluginPanel, panelKey, openPluginPanel, closePluginPane, getPluginPaneState } from './panel-store'
 
