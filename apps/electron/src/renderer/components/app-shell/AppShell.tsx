@@ -76,6 +76,8 @@ import { SessionList, type ChatGroupingMode } from "./SessionList"
 import { MainContentPanel } from "./MainContentPanel"
 import { BoardListToggle } from "./kanban/BoardListToggle"
 import { PanelStackContainer } from "./PanelStackContainer"
+import { PluginPaneHost } from "@/plugins/PluginPaneHost"
+import { usePluginPaneState } from "@/plugins/panel-store"
 import { CompactSessionListFilter } from "./CompactSessionListFilter"
 import type { ChatDisplayHandle } from "./ChatDisplay"
 import { LeftSidebar } from "./LeftSidebar"
@@ -565,6 +567,11 @@ function AppShellContent({
   const isAutoCompact = shellWidth > 0 && shellWidth < MOBILE_THRESHOLD
 
   const effectiveSidebarAndNavigatorHidden = isSidebarAndNavigatorHidden || isAutoCompact
+
+  // Plugin pane (right-hand, plugin-contributed). Hidden in compact mode.
+  const pluginPane = usePluginPaneState()
+  const isPluginPaneVisible = !isAutoCompact && pluginPane.isOpen
+    && pluginPane.panels.some((p) => p.key === pluginPane.activePanelKey)
 
   // What's New overlay
   const [showWhatsNew, setShowWhatsNew] = React.useState(false)
@@ -3624,7 +3631,7 @@ function AppShellContent({
           }
           navigatorWidth={isAutoCompact ? sessionListWidth : (effectiveSidebarAndNavigatorHidden || isBoardView || isPagesView ? 0 : sessionListWidth)}
           isSidebarAndNavigatorHidden={effectiveSidebarAndNavigatorHidden}
-          isRightSidebarVisible={false}
+          isRightSidebarVisible={isPluginPaneVisible}
           isCompact={isAutoCompact}
           isResizing={!!isResizing}
         />
@@ -3696,6 +3703,9 @@ function AppShellContent({
           />
         </div>
         )}
+
+        {/* Right-hand plugin pane + toggle rail (renders nothing without plugin panels) */}
+        {!isAutoCompact && <PluginPaneHost />}
 
       </div>
 
