@@ -9,7 +9,7 @@
  * a one-line registration.
  */
 
-import type { PluginDisposable } from '@craft-agent/shared/plugins'
+import type { PluginDisposable } from '@craft-agent/shared/plugins/types'
 import type { PluginMainContext } from '../main/plugin-host'
 
 export type PluginMainEntry = (
