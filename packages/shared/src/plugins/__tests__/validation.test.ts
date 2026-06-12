@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test';
-import { validatePluginManifest, manifestHasPermission } from '../validation.ts';
-import type { PluginManifest } from '../types.ts';
+import { validatePluginManifest } from '../validation.ts';
+import { manifestHasPermission, type PluginManifest } from '../types.ts';
 
 const VALID_MANIFEST = {
   id: 'web-browser',

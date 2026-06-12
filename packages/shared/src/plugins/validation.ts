@@ -55,11 +55,3 @@ export function validatePluginManifest(raw: unknown): PluginManifestValidationRe
 
   return { valid: true, manifest: result.data as PluginManifest, errors: [] };
 }
-
-/** Type guard: does the manifest declare a permission? */
-export function manifestHasPermission(
-  manifest: PluginManifest,
-  permission: PluginManifest['permissions'][number],
-): boolean {
-  return manifest.permissions.includes(permission);
-}
