@@ -12,6 +12,6 @@
  * 3. Add its entry module(s) to renderer-entries.ts and/or main-entries.ts
  */
 
-import type { PluginManifest } from '@craft-agent/shared/plugins'
+import type { PluginManifest } from '@craft-agent/shared/plugins/types'
 
 export const BUILTIN_PLUGIN_MANIFESTS: PluginManifest[] = []

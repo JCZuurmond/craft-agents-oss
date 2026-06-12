@@ -7,7 +7,7 @@
  */
 
 import type { ComponentType } from 'react'
-import type { PluginDisposable, PluginManifest } from '@craft-agent/shared/plugins'
+import type { PluginDisposable, PluginManifest } from '@craft-agent/shared/plugins/types'
 
 /** Props passed to a contributed side-panel component */
 export interface PluginPanelProps {
