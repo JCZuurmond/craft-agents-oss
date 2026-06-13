@@ -3,7 +3,9 @@
 Red-team review of the framework added in
 [`JCZuurmond/craft-agents-oss#1`](https://github.com/JCZuurmond/craft-agents-oss/pull/1)
 (framework only; the `web-browser` reference plugin is the stacked PR #2).
-Reviewed at head `12f42e0`, base `a512da7`.
+Original review was written at head `12f42e0`; this extended pass rechecked
+PR #1 at head `e2f6e07` (after PR #3 was merged into the stack), base
+`a512da7`.
 
 ---
 
@@ -20,22 +22,27 @@ extension point (`ui.sidePanel` → a single hardcoded **right**-edge slot) and 
 Eight of the ten Part C stress cases are inexpressible without core edits. So the
 framework generalized the *plumbing* well and the *contribution points* barely at
 all. It is a real plugin host with a browser-pane-shaped API — not a fake, but
-not yet a platform.
+not yet a platform. The supplemental pass strengthens that conclusion: the
+renderer runtime is currently bootstrapped by the right-pane host itself, so a
+future renderer-only command/settings/status plugin would still be coupled to the
+presence of the pane seam (S-M1).
 
 **Q2 — Minimal footprint / upgrade-safe?**
-**Yes, strongly — this is the PR's best quality.** 23 new files vs 18 modified
-existing files, and the modifications total **~131 added / 2 deleted** lines.
-Both deletions are one-expression swaps at *pre-existing* seams (`webviewTag:
-false` → computed; `isRightSidebarVisible={false}` → computed). With the
-registration maps empty the app is provably pixel-identical to vanilla. The
-revert test passes cleanly. The only real conflict risk is concentrated in two
-hot files (`AppShell.tsx`, `shared/types.ts`), and one of those touches is
-avoidable (see M5).
+**Yes, strongly — this is the PR's best quality.** Excluding this review doc,
+the framework/docset adds 23 new files and modifies 18 existing files; the
+pre-existing-file footprint is **132 added / 2 deleted** lines. Both deletions
+are one-expression swaps at *pre-existing* seams (`webviewTag: false` →
+computed; `isRightSidebarVisible={false}` → computed). With the registration
+maps empty the app is provably pixel-identical to vanilla. The revert test passes
+cleanly. The only real conflict risk is concentrated in two hot files
+(`AppShell.tsx`, `shared/types.ts`), and one of those touches is avoidable (see
+M5).
 
 Net: **merge-able as a v1 foundation**, but the docs over-promise on isolation
-(see Blocker B1) and the contribution model needs a generalization pass before a
-*second* kind of plugin lands (M1–M3). Fix B1's documentation now; schedule
-M1–M3 before the platform is opened to third parties.
+(see Blocker B1), some shipped docs point at a browser plugin that is not in this
+PR (S-M4), and the contribution/runtime model needs a generalization pass before
+a *second* kind of plugin lands (M1–M3, S-M1). Fix B1/S-M4's documentation now;
+schedule M1–M3/S-M1 before the platform is opened to third parties.
 
 ---
 
@@ -164,11 +171,101 @@ the existing `WorkspaceEventBus`/`AgentEvent` types, **not** a second event
 system. Flagging now so the manifest/permission vocabulary (`events.read`?)
 is reserved and the deferral doesn't calcify into a parallel bus later.
 
+### Supplemental findings from the current head (`e2f6e07`)
+
+#### Major (supplemental)
+
+**S-M1 — Renderer runtime bootstrap is owned by the right-pane host, so the
+"plugin runtime" is still coupled to the browser-pane seam.**
+`PluginPaneHost.tsx:36-38` calls `initializePluginRuntime()`, and the only core
+mount for that host is `AppShell.tsx:3348`, guarded by `!isAutoCompact`. That
+means renderer plugin activation is a side effect of mounting the **right-hand
+pane UI**, not an app-level plugin runtime. Today that mostly works because the
+only intended renderer contribution is a right pane. But it fails the Part C
+stress tests the moment a plugin contributes a command, settings page, status
+item, modal, or background renderer listener: those plugins should activate even
+when no pane host exists and even in compact mode.
+
+This is the strongest concrete evidence that the framework's renderer half is
+still browser-pane-shaped, despite the generic registry underneath. **VS Code**
+keeps extension activation in the extension host and treats views as one
+contribution among many; **Obsidian** loads a plugin via lifecycle first, then
+lets it register views/commands/settings. We should follow that split.
+
+*Fix:* move `initializePluginRuntime()` to an app-level `PluginRuntimeProvider`
+or an unconditional `AppShell` effect. Leave `PluginPaneHost` responsible only
+for rendering `ui.sidePanel` contributions. This is a tiny seam move (one import
++ one effect) with high generality payoff.
+
+**S-M2 — Renderer activation and render failures are not reported to the
+authoritative Settings registry.**
+Settings reads `window.electronAPI.plugins.list()` (`PluginsSettingsPage.tsx:35-43`),
+which is backed by the **main-process** registry (`plugin-host.ts:186-189`). A
+renderer-only plugin with a broken `activate(ctx)` fails inside the renderer's
+separate registry (`runtime.ts:50-60`) but never reports that status back to
+main. The user still sees the plugin as enabled/active unless the main-side
+activation failed. The docs promise that a throwing plugin is shown as
+`status: 'error'` in Settings, and `PluginsSettingsPage.tsx:94-95` has UI for
+that state, but renderer failures cannot currently reach it. Render-time errors
+are worse: `PluginPaneHost.tsx:97-98` mounts the contributed component without an
+error boundary, so a throwing panel can take down the shell and still not update
+plugin status.
+
+*Fix:* either narrow the docs/type names to say `PluginInfo.status` is
+**main-host status only**, or add a small renderer-status IPC
+(`__plugins:reportRendererStatus`) that each window emits after activation
+failures and an error boundary around contributed components. For Settings,
+aggregate status as "error if any window reports renderer error" and show the
+window/error details.
+This borrows the failure-attribution lesson from **IntelliJ** (`PluginException`
+attributes errors to plugins) without needing VS Code-style process isolation.
+
+**S-M3 — The webview URL allowlist is attach-time only; post-attach navigation is
+not restricted.**
+`will-attach-webview` validates the initial `params.src` (`plugin-host.ts:240-252`)
+and hardens preferences (`plugin-host.ts:254-262`), but after `did-attach-webview`
+the only policy installed is popup containment (`plugin-host.ts:265-278`). There
+is no `will-navigate`/`will-frame-navigate`/redirect guard on the guest
+`webContents`. A plugin or compromised guest page should not be able to wander
+from an allowed `https:` page to `file:`, `data:`, `javascript:`, `devtools:`,
+custom app protocols, or any future privileged scheme merely because the initial
+attach was allowed. The existing sandbox makes many escalations harder, but
+browser-extension/Figma-style capability models enforce **navigation and origin
+policy continuously**, not just at creation.
+
+*Fix:* in `did-attach-webview`, install navigation guards on the guest
+`webContents` using the same `isAllowedWebviewUrl()` predicate (probably
+`http:`, `https:`, and `about:blank` only), log and `preventDefault()` everything
+else, and cover redirects/subframe navigation where Electron exposes separate
+events. Keep `setWindowOpenHandler` as the popup path. Until this lands, the
+"Figma-grade" language in the security review should be downgraded to
+"strong attach-time hardening."
+
+**S-M4 — PR #1's framework docs refer to a browser plugin that is not present in
+PR #1, making the docs non-reproducible on the base review target.**
+This branch is explicitly framework-only, with the `web-browser` plugin in the
+stacked PR #2. But `QUICKSTART.md:3-5`, `QUICKSTART.md:16`,
+`QUICKSTART.md:35`, `QUICKSTART.md:86`, `QUICKSTART.md:108`,
+`QUICKSTART.md:115`, `AUTHORING.md:143`, `README.md:23-24`,
+`SECURITY.md:39`, and `main-entries.ts:7` all talk as if
+`apps/electron/src/plugins/web-browser/` already ships in PR #1. A reviewer or
+plugin author following those links on PR #1 lands on missing files; the example
+registration even references `WEB_BROWSER_PLUGIN_MANIFEST`/`activateWebBrowser`
+that do not exist until PR #2. This is not an architecture flaw, but it is a
+serious upgrade-stack/docs flaw: the lower PR should not document files only
+available in an upper PR.
+
+*Fix:* either (a) make PR #1 docs self-contained with a minimal `hello-pane`
+example and move browser-pane-specific examples to PR #2, or (b) explicitly mark
+every browser-pane reference as "available in stacked PR #2" with no file links
+that are broken on PR #1. Prefer (a); it keeps the framework docs neutral and
+reduces the browser-pane costume smell.
+
 ### Minor
 
 **M5 — Avoidable logic-scatter in the most conflict-prone core file (DRY
 violation).**
-`AppShell.tsx:564-566` *re-implements* the pane-visibility predicate inline
+`AppShell.tsx:565-567` *re-implements* the pane-visibility predicate inline
 (`pluginPane.isOpen && pluginPane.panels.some(p => p.key === activePanelKey)`),
 while `panel-store.ts:141` already exports `isPluginPaneVisible()` doing exactly
 this. Core should consume the exported selector, not duplicate it. `AppShell.tsx`
@@ -224,14 +321,15 @@ is a gap; fine for v1.
 
 ## Credit where due (don't regress these)
 
-- **The `<webview>` hardening is genuinely strong, defense-in-depth, and
-  main-enforced.** `plugin-host.ts:238` intercepts `will-attach-webview`
-  app-wide, forces `sandbox`/`contextIsolation`/`webSecurity` on and
-  `nodeIntegration`/preload off regardless of what the tag requested, allowlists
-  the `persist:craft-plugin-<id>` partition, restricts to http(s)/about:, denies
-  camera/mic/geo by default, and contains popups to the OS browser. For the
-  *guest page* this matches or exceeds **Figma**'s isolation posture. This is the
-  one real security boundary and it is well built.
+- **The `<webview>` hardening is a strong, main-enforced start.**
+  `plugin-host.ts:238` intercepts `will-attach-webview` app-wide, forces
+  `sandbox`/`contextIsolation`/`webSecurity` on and `nodeIntegration`/preload off
+  regardless of what the tag requested, allowlists the
+  `persist:craft-plugin-<id>` partition, validates the initial http(s)/about
+  URL, denies camera/mic/geo by default, and contains popups to the OS browser.
+  This is the one real security boundary and it should not regress. But do not
+  call it complete/Figma-grade until S-M3's post-attach navigation filtering
+  lands.
 - **Error isolation and reverse-order teardown** (`registry.ts:92-131`) are
   correct and swallow disposer failures without leaking the rest.
 - **The enabling refactor was already present** (Kent Beck "make the change easy,
@@ -245,24 +343,44 @@ is a gap; fine for v1.
 
 | System | What they do | What this PR does | Defensible for an Electron + agent app? |
 |---|---|---|---|
-| **VS Code** | Separate **extension-host process**; one narrow stable `vscode` facade; **declarative `contributes`** (commands/views/viewsContainers/menus); **activationEvents** for lazy load; sandboxed **webviews**; **proposed API** to evolve safely. | Same renderer process (no host isolation); **imperative** `activate(ctx)` registration; **no** lazy activation; sandboxed webview ✔; **no** proposed/versioned API. | Webview parity ✔. Diverges on isolation, declarativeness, lazy-load, versioning — **not** all justified: M2/M3 are cheap to adopt and worth it. Process isolation is reasonably deferred for first-party v1. |
+| **VS Code** | Separate **extension-host process**; one narrow stable `vscode` facade; **declarative `contributes`** (commands/views/viewsContainers/menus); **activationEvents** for lazy load; sandboxed **webviews**; **proposed API** to evolve safely. | Same renderer process (no host isolation); **imperative** `activate(ctx)` registration; **no** lazy activation; attach-hardened webview with a navigation gap (S-M3); **no** proposed/versioned API. | Webview direction ✔, but not parity until S-M3. Diverges on isolation, declarativeness, lazy-load, versioning — **not** all justified: M2/M3 are cheap to adopt and worth it. Process isolation is reasonably deferred for first-party v1. |
 | **Eclipse** | OSGi bundles + `plugin.xml` **extension points**; heavyweight, maximally general. | One typed permission enum + imperative context. | Correct to be lighter than Eclipse for this app; the *declarative* lesson (M2) still applies without the OSGi weight. |
 | **Emacs** | Fully in-process Lisp, hooks, `advice`, redefinition; max extensibility, ~zero sandbox. | In-process renderer plugins with **advisory** permission proxy. | This is effectively where the PR sits *today* (see B1) while *claiming* otherwise. Fine if the docs admit it (Emacs is honest that it's an open system). |
 | **Neovim** | **msgpack-RPC remote plugins** out-of-process + Lua API; deliberate decoupling so a plugin can't crash the editor. | Renderer plugins share the app's process and event loop. | The relevant warning for *failure isolation*: a slow/crashing renderer plugin can jank or take the window down. Acceptable for first-party v1; the model to copy if/when third-party code loads. |
 | **IntelliJ** | "Everything is an extension point" + DI container + plugin.xml. | One extension dimension (side pane) + capability permissions. | Right to not go full extension-point-explosion now; M1's slot registry is the minimal step toward it. |
 | **Obsidian** (closest analog) | Electron, `Plugin` `onload`/`onunload`, `registerView`/`addCommand`/`addSettingTab`, auto-cleanup of registered resources; **community plugins run with full access — trust boundary is the author, not a sandbox.** | `activate`/dispose with auto-tracked disposables (very close to Obsidian's Component model ✔); only `registerView`-equivalent exists (no command/settings/ribbon contributions yet). | The disposable-lifecycle mirror of Obsidian is apt and well-executed. **Obsidian is also the honesty model for B1**: it never pretends in-process plugins are sandboxed. |
-| **Figma** | Sandbox realm (QuickJS/WASM) for scene code + **iframe** for UI; every cross-boundary call is serialized `postMessage`. | `<webview>` guest is isolated like Figma's iframe ✔; but the *plugin's own code* is not in any sandbox (unlike Figma's QuickJS). | Webview = Figma-grade ✔. The plugin-logic sandbox gap is the B1 honesty issue; QuickJS-style isolation is the target for external code. |
-| **Chrome MV3** | Manifest **declared permissions** + `host_permissions`; background service worker vs content-script split; least-privilege. | Manifest **declared permissions** ✔ (good parity on *declaration & UI surfacing*); main vs renderer split ≈ background/content split ✔. | The permission-declaration model is the most battle-tested thing the PR borrowed and it borrowed it well. The gap vs Chrome is *enforcement* (Chrome's are kernel-enforced; these are advisory in-renderer) — again the B1 theme. |
+| **Figma** | Sandbox realm (QuickJS/WASM) for scene code + **iframe** for UI; every cross-boundary call is serialized `postMessage`. | `<webview>` guest attach hardening resembles Figma's UI iframe, but lacks continuous navigation enforcement (S-M3); the *plugin's own code* is not in any sandbox (unlike Figma's QuickJS). | Directionally right, not Figma-grade until S-M3. The plugin-logic sandbox gap is the B1 honesty issue; QuickJS-style isolation is the target for external code. |
+| **Chrome MV3** | Manifest **declared permissions** + `host_permissions`; background service worker vs content-script split; least-privilege. | Manifest **declared permissions** ✔ (good parity on *declaration & UI surfacing*); main vs renderer split ≈ background/content split ✔. | The permission-declaration model is the most battle-tested thing the PR borrowed and it borrowed it well. The gap vs Chrome is *enforcement* (Chrome's are kernel-enforced; these are advisory in-renderer and incomplete for webview navigation) — B1/S-M3. |
 
 **Sources:**
-[VS Code activation events](https://code.visualstudio.com/api/references/activation-events),
-[VS Code contribution points](https://code.visualstudio.com/api/references/contribution-points),
-[VS Code webview API](https://code.visualstudio.com/api/extension-guides/webview),
-[Obsidian Plugin lifecycle](https://docs.obsidian.md/Reference/TypeScript+API/Plugin),
-[Figma plugin security](https://www.figma.com/blog/how-we-built-the-figma-plugin-system/),
-[Chrome MV3 declare permissions](https://developer.chrome.com/docs/extensions/develop/concepts/declare-permissions),
-[Neovim extension/plugin system](https://deepwiki.com/neovim/neovim/4-extension-and-plugin-system),
-[Fowler — Plugin pattern](https://martinfowler.com/eaaCatalog/plugin.html).
+Verified sources used for the comparison:
+[VS Code Extension Host](https://code.visualstudio.com/api/advanced-topics/extension-host),
+[activation events](https://code.visualstudio.com/api/references/activation-events),
+[contribution points](https://code.visualstudio.com/api/references/contribution-points),
+[proposed API](https://code.visualstudio.com/api/advanced-topics/using-proposed-api),
+[webviews](https://code.visualstudio.com/api/extension-guides/webview);
+[Eclipse extensions/extension points](https://help.eclipse.org/latest/topic/org.eclipse.pde.doc.user/concepts/extension.htm)
+and [extension registry](https://help.eclipse.org/latest/topic/org.eclipse.platform.doc.isv/guide/runtime_registry.htm);
+[Emacs hooks](https://www.gnu.org/software/emacs/manual/html_node/elisp/Hooks.html)
+and [advice](https://www.gnu.org/software/emacs/manual/html_node/elisp/Advising-Functions.html);
+[Neovim remote plugins](https://neovim.io/doc/user/remote_plugin.html) and
+[API/RPC](https://neovim.io/doc/user/api.html);
+[IntelliJ extension points](https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html),
+[plugin.xml](https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html), and
+[services](https://plugins.jetbrains.com/docs/intellij/plugin-services.html);
+[Obsidian Plugin API](https://docs.obsidian.md/Reference/TypeScript+API/Plugin)
+and [manifest](https://docs.obsidian.md/Plugins/Releasing/Plugin+manifest);
+[Figma how plugins run](https://developers.figma.com/docs/plugins/how-plugins-run/)
+and [plugin-system security write-up](https://www.figma.com/blog/how-we-built-the-figma-plugin-system/);
+[Chrome declared permissions](https://developer.chrome.com/docs/extensions/develop/concepts/declare-permissions),
+[service workers](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers), and
+[content scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts);
+[Fowler Plugin](https://martinfowler.com/eaaCatalog/plugin.html) and
+[Separated Interface](https://martinfowler.com/eaaCatalog/separatedInterface.html);
+[Martin Clean Architecture / Dependency Rule](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html);
+[Parnas module decomposition](http://sunnyday.mit.edu/16.355/parnas-criteria.html);
+[Meyer Open-Closed Principle](https://en.wikipedia.org/wiki/Open%E2%80%93closed_principle);
+[Kent Beck quote](https://x.com/KentBeck/status/250733358307500032).
 
 ---
 
@@ -303,10 +421,12 @@ half. That asymmetry is the evidence for the Q1 verdict.
 
 ## Part D — Minimal-footprint / upgrade-safety audit
 
-**Diffstat:** 41 files, **+2680 / −2**. **23 new files**, **18 modified existing
-files**. Net change in pre-existing files: **~131 added, 2 deleted** — the two
-deletions are single-token swaps (`false` → a function call). This is about as
-additive as a cross-cutting feature can be.
+**Diffstat at `e2f6e07`:** current PR head including this review doc is 42
+files, **+3082 / −2**. Excluding `docs/plugins/REVIEW.md` itself, the
+framework/docset is 41 files, **+2680 / −2**: **23 new files** and **18 modified
+existing files**. Net change in pre-existing files: **132 added, 2 deleted** —
+the two deletions are single-token swaps (`false` → a function call). This is
+about as additive as a cross-cutting feature can be.
 
 **Revert test:** With `BUILTIN_PLUGIN_MANIFESTS = []` (this PR's state),
 `isPluginWebviewEnabled()` returns `false` (empty registry), `PluginPaneHost`
@@ -352,9 +472,10 @@ M5.
 
 ## Part E — Cross-cutting hard questions
 
-- **Isolation/security.** Embedded web page: **well isolated** (main-enforced,
-  Figma-grade — see Credit). Plugin's own renderer code: **not isolated** — full
-  ambient authority over `window.electronAPI` and other plugins' state (**B1**).
+- **Isolation/security.** Embedded web page: **well isolated at attach time**
+  (main-enforced — see Credit), but post-attach navigation still needs S-M3.
+  Plugin's own renderer code: **not isolated** — full ambient authority over
+  `window.electronAPI` and other plugins' state (**B1**).
   No permission grants credentials/Node/config — *true only because no service
   exposes them through `ctx`*, but the plugin can reach them via the shared
   `window` anyway. Versus Chrome (kernel-enforced declared permissions) / Figma
@@ -363,12 +484,14 @@ M5.
 - **API versioning & stability.** **Absent (M3).** No framework `apiVersion`, no
   proposed/stable tiering. The single biggest long-term risk to a community
   ecosystem.
-- **Failure isolation.** **Activation** errors are isolated (`status: 'error'`,
-  others unaffected) — good. **Runtime** is not: an enabled plugin's component
-  throwing during render, or a busy loop, janks/crashes the shared renderer (no
-  React error boundary around `<activePanel.contribution.component>` in
-  `PluginPaneHost.tsx:98`). Min fix: wrap contributed components in an error
-  boundary. (Neovim/VS Code get this free via process isolation.)
+- **Failure isolation.** **Main-process activation** errors are isolated
+  (`status: 'error'`, others unaffected) — good. **Renderer activation** errors
+  are isolated locally but invisible to Settings (S-M2). **Runtime** is not: an
+  enabled plugin's component throwing during render, or a busy loop, janks/crashes
+  the shared renderer (no React error boundary around
+  `<activePanel.contribution.component>` in `PluginPaneHost.tsx:98`). Min fix:
+  wrap contributed components in an error boundary and report renderer status.
+  (Neovim/VS Code get stronger isolation via process boundaries.)
 - **Performance.** **Load-everything-at-startup**, and main-side activation runs
   *before first window* on the paint-critical path (M2). Negligible at one
   plugin; no lazy-activation story for scale.
@@ -382,21 +505,25 @@ it fits a multi-pane Electron agent shell.
 
 1. **Honesty + (optional) close the `invoke` hole (B1)** — *docs + ~5 LOC*.
    Borrowed from **Obsidian**'s honest trust model. Prerequisite to shipping.
-2. **Declarative `contributes` in the manifest (M2)** — unlocks introspection +
+2. **Decouple renderer runtime bootstrap from the side-pane host (S-M1)** — one
+   app-level effect/provider; large generality payoff and removes the clearest
+   browser-pane coupling.
+3. **Declarative `contributes` in the manifest (M2)** — unlocks introspection +
    lazy activation + powers slots/commands/settings declaratively. Borrowed from
    **VS Code / Eclipse**. One manifest field, large payoff.
-3. **Generic contribution-slot registry, starting with `location` on side panels
+4. **Generic contribution-slot registry, starting with `location` on side panels
    (M1)** — turns "new UI location" from a core edit into a data change; subsumes
    left pane, status bar, toolbar. Borrowed from **VS Code viewsContainers/views**.
-4. **Framework `apiVersion` + `engines` gate (M3)** — cheapest insurance for
+5. **Complete webview navigation enforcement (S-M3)** — small Electron event-hook
+   addition; aligns the webview with **Chrome/Figma**-style continuous capability
+   enforcement.
+6. **Framework `apiVersion` + `engines` gate (M3)** — cheapest insurance for
    upgrade-safe community plugins; the exact issue-#256 thesis applied to the
    plugin contract. Borrowed from **VS Code `engines.vscode`**.
-5. **(When needed) read-only client mirror of `WorkspaceEventBus` for agent hooks
+7. **(When needed) read-only client mirror of `WorkspaceEventBus` for agent hooks
    (M4)** — reuse, don't fork. Borrowed from the app's **own automations** bus.
 
 Deliberately **not** recommended now (avoid over-engineering — no realistic v1
 plugin needs them): inter-plugin dependency resolution (#10), plugin-contributed
 source types (#6), themes (#8), separate extension-host process. Reserve the
 manifest vocabulary for them; don't build them.
-</content>
-</invoke>
