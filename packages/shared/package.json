@@ -59,6 +59,7 @@
     "./mentions": "./src/mentions/index.ts",
     "./skills/types": "./src/skills/types.ts",
     "./plugins": "./src/plugins/index.ts",
+    "./plugins/node": "./src/plugins/node.ts",
     "./plugins/types": "./src/plugins/types.ts",
     "./plugins/registry": "./src/plugins/registry.ts",
     "./automations": "./src/automations/index.ts",

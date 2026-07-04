@@ -7,6 +7,7 @@
 import { z } from 'zod';
 import {
   PLUGIN_PERMISSIONS,
+  PLUGIN_PANEL_LOCATIONS,
   type PluginManifest,
   type PluginManifestValidationResult,
 } from './types.ts';
@@ -17,6 +18,27 @@ const PLUGIN_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const PluginEntriesSchema = z.object({
   renderer: z.string().min(1).optional(),
   main: z.string().min(1).optional(),
+});
+
+export const PluginSidePanelDeclarationSchema = z.object({
+  id: z
+    .string()
+    .min(1, 'panel id cannot be empty')
+    .max(64, 'panel id must be 64 characters or fewer')
+    .regex(PLUGIN_ID_PATTERN, 'panel id must be slug-style: lowercase letters, digits, and hyphens'),
+  title: z.string().min(1, 'panel title cannot be empty').max(128),
+  icon: z.string().max(64).optional(),
+  location: z.enum(PLUGIN_PANEL_LOCATIONS).optional(),
+});
+
+export const PluginContributionsSchema = z.object({
+  sidePanels: z
+    .array(PluginSidePanelDeclarationSchema)
+    .refine(
+      (panels) => new Set(panels.map((p) => p.id)).size === panels.length,
+      'sidePanels must not contain duplicate panel ids',
+    )
+    .optional(),
 });
 
 export const PluginManifestSchema = z.object({
@@ -34,8 +56,22 @@ export const PluginManifestSchema = z.object({
   permissions: z
     .array(z.enum(PLUGIN_PERMISSIONS))
     .refine((perms) => new Set(perms).size === perms.length, 'permissions must not contain duplicates'),
+  apiVersion: z
+    .number()
+    .int('apiVersion must be an integer')
+    .min(1, 'apiVersion must be 1 or greater')
+    .optional(),
+  contributes: PluginContributionsSchema.optional(),
   entries: PluginEntriesSchema.optional(),
   defaultEnabled: z.boolean().optional(),
+}).superRefine((manifest, ctx) => {
+  if ((manifest.contributes?.sidePanels?.length ?? 0) > 0 && !manifest.permissions.includes('ui.sidePanel')) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['contributes', 'sidePanels'],
+      message: "declaring sidePanels requires the 'ui.sidePanel' permission",
+    });
+  }
 });
 
 /**
