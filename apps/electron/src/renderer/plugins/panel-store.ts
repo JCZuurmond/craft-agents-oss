@@ -79,17 +79,24 @@ function clampWidth(width: number): number {
 // ============================================================
 
 function readPersisted<T>(key: storage.StorageKey, fallback: T, location: PluginPanelLocation): T {
-  const fullKey = storage.getKeyString(key, location)
   try {
-    const raw = window.sessionStorage.getItem(fullKey)
+    const raw = window.sessionStorage.getItem(storage.getKeyString(key, location))
     if (raw !== null) return JSON.parse(raw) as T
   } catch {
     // sessionStorage unavailable (tests, SSR) — fall through to the seed
   }
-  const seeded = storage.get(key, fallback, location)
-  if (seeded !== fallback) return seeded
-  // Migration: pre-location state was persisted unsuffixed for the right edge.
-  return location === 'right' ? storage.get(key, fallback) : fallback
+  try {
+    const seeded = storage.getRaw(key, location)
+    if (seeded !== null) return JSON.parse(seeded) as T
+    // Migration: pre-location state was persisted unsuffixed for the right edge.
+    if (location === 'right') {
+      const legacy = storage.getRaw(key)
+      if (legacy !== null) return JSON.parse(legacy) as T
+    }
+  } catch {
+    // localStorage unavailable or corrupt entry — use the fallback
+  }
+  return fallback
 }
 
 function writePersisted<T>(key: storage.StorageKey, value: T, location: PluginPanelLocation): void {
