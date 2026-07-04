@@ -7,7 +7,7 @@
  */
 
 import type { ComponentType } from 'react'
-import type { PluginDisposable, PluginManifest } from '@craft-agent/shared/plugins/types'
+import type { PluginDisposable, PluginManifest, PluginPanelLocation } from '@craft-agent/shared/plugins/types'
 
 /** Props passed to a contributed side-panel component */
 export interface PluginPanelProps {
@@ -15,7 +15,14 @@ export interface PluginPanelProps {
   isActive: boolean
 }
 
-/** A side pane contributed to the right-hand plugin pane host */
+/**
+ * A side panel contributed to a plugin pane host (left or right shell edge).
+ *
+ * Panels declared in the manifest's `contributes.sidePanels` block are the
+ * source of truth for title/icon/location — registering the same panel id
+ * from code supplies the component and ignores the other fields. Panels
+ * registered without a declaration are complete definitions (eager path).
+ */
 export interface PluginSidePanelContribution {
   /** Panel id, unique within the plugin */
   id: string
@@ -23,6 +30,8 @@ export interface PluginSidePanelContribution {
   title: string
   /** Emoji shown in the toggle rail (falls back to the manifest icon) */
   icon?: string
+  /** Which shell edge hosts the panel (default 'right') */
+  location?: PluginPanelLocation
   /** Panel body. Mounted while the pane is open and this panel is active. */
   component: ComponentType<PluginPanelProps>
 }

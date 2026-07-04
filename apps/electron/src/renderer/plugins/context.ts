@@ -5,8 +5,6 @@
  * entry, and tracks every registration so deactivation can dispose them all.
  */
 
-// Import from the types subpath (not the package index) — the index re-exports
-// Node-only storage code that must stay out of the renderer bundle.
 import {
   manifestHasPermission,
   getPluginWebviewPartition,
@@ -85,7 +83,11 @@ export function createPluginContext(manifest: PluginManifest): CreatedPluginCont
         openSidePanel: (panelId) => openPluginPanel(panelKey(pluginId, panelId)),
         closeSidePanel: (panelId) => {
           const state = getPluginPaneState()
-          if (state.activePanelKey === panelKey(pluginId, panelId)) closePluginPane()
+          const key = panelKey(pluginId, panelId)
+          const panel = state.panels.find((p) => p.key === key)
+          if (panel && state.edges[panel.location].activePanelKey === key) {
+            closePluginPane(panel.location)
+          }
         },
       }
     : deniedSurface(pluginId, 'ui.sidePanel', {} as PluginUi)
