@@ -2,9 +2,15 @@
  * PluginsSettingsPage
  *
  * Lists every discovered plugin (built-in and external) with its declared
- * permissions and an enable/disable toggle. Toggling is live in all windows;
- * plugins that embed web content (`ui.webview`) need an app relaunch when the
- * window-level webview flag changes.
+ * permissions and contributions and an enable/disable toggle. Toggling is
+ * live in all windows; plugins that embed web content (`ui.webview`) need an
+ * app relaunch when the window-level webview flag changes.
+ *
+ * External plugins are discovery-only in this version (their manifests are
+ * listed but no external code is loaded), so their toggles stay disabled with
+ * a "manifest only" note instead of silently doing nothing. Plugins targeting
+ * an unsupported plugin API version show the incompatibility reason and can
+ * never be enabled.
  */
 
 import { useState, useEffect, useCallback } from 'react'
@@ -81,24 +87,40 @@ export default function PluginsSettingsPage() {
                       {t("settings.plugins.noPlugins")}
                     </div>
                   ) : (
-                    plugins.map((plugin) => (
-                      <SettingsToggle
-                        key={plugin.id}
-                        label={`${plugin.icon ? `${plugin.icon} ` : ''}${plugin.name}`}
-                        description={[
-                          plugin.description,
-                          `v${plugin.version}`,
-                          plugin.permissions.length > 0
-                            ? `${t("settings.plugins.permissions")}: ${plugin.permissions.join(', ')}`
-                            : undefined,
-                          plugin.status === 'error'
-                            ? `${t("settings.plugins.activationError")}: ${plugin.error ?? ''}`
-                            : undefined,
-                        ].filter(Boolean).join(' — ')}
-                        checked={plugin.enabled}
-                        onCheckedChange={(enabled) => { void handleToggle(plugin.id, enabled) }}
-                      />
-                    ))
+                    plugins.map((plugin) => {
+                      const declaredPanels = plugin.contributes?.sidePanels ?? []
+                      // External plugin code is not loaded in this version —
+                      // enabling one would be a silent no-op, so the toggle
+                      // only allows turning an already-enabled one off.
+                      const manifestOnly = plugin.source === 'user'
+                      return (
+                        <SettingsToggle
+                          key={plugin.id}
+                          label={`${plugin.icon ? `${plugin.icon} ` : ''}${plugin.name}`}
+                          description={[
+                            plugin.description,
+                            `v${plugin.version}`,
+                            plugin.permissions.length > 0
+                              ? `${t("settings.plugins.permissions")}: ${plugin.permissions.join(', ')}`
+                              : undefined,
+                            declaredPanels.length > 0
+                              ? `${t("settings.plugins.panels")}: ${declaredPanels
+                                  .map((panel) => `${panel.title} (${panel.location ?? 'right'})`)
+                                  .join(', ')}`
+                              : undefined,
+                            manifestOnly ? t("settings.plugins.externalManifestOnly") : undefined,
+                            plugin.incompatibility
+                              ? `${t("settings.plugins.incompatible")}: ${plugin.incompatibility}`
+                              : plugin.status === 'error'
+                                ? `${t("settings.plugins.activationError")}: ${plugin.error ?? ''}`
+                                : undefined,
+                          ].filter(Boolean).join(' — ')}
+                          checked={plugin.enabled}
+                          disabled={!!plugin.incompatibility || (manifestOnly && !plugin.enabled)}
+                          onCheckedChange={(enabled) => { void handleToggle(plugin.id, enabled) }}
+                        />
+                      )
+                    })
                   )}
                 </SettingsCard>
               </SettingsSection>
