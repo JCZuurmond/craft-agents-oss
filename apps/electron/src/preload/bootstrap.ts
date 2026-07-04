@@ -417,6 +417,8 @@ client.onConnectionStateChanged((state) => {
   setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('__plugins:setEnabled', id, enabled),
   invoke: (pluginId: string, channel: string, args?: unknown) =>
     ipcRenderer.invoke('__plugins:invoke', pluginId, channel, args),
+  reportRendererStatus: (pluginId: string, error: string | null) =>
+    ipcRenderer.invoke('__plugins:reportRendererStatus', pluginId, error),
   onChanged: (callback) => {
     const handler = (_e: unknown, plugins: Parameters<typeof callback>[0]) => callback(plugins)
     ipcRenderer.on('__plugins:changed', handler)
