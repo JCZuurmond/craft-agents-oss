@@ -44,13 +44,20 @@ export class PluginRegistry {
    * Register a discovered plugin. Duplicate ids are rejected (first
    * registration wins — built-ins are registered before external plugins, so
    * an external plugin can never shadow a built-in).
+   *
+   * A plugin registered with an `incompatibility` reason (e.g. it targets an
+   * unsupported apiVersion) is listed with status 'error' and can never be
+   * activated or enabled — the reason is surfaced instead of a silent no-op.
    */
-  register(plugin: LoadedPlugin, enabled: boolean): boolean {
+  register(plugin: LoadedPlugin, enabled: boolean, options?: { incompatibility?: string }): boolean {
     if (this.entries.has(plugin.manifest.id)) return false;
+    const incompatibility = options?.incompatibility;
     this.entries.set(plugin.manifest.id, {
       ...plugin,
-      enabled,
-      status: 'inactive',
+      enabled: incompatibility ? false : enabled,
+      status: incompatibility ? 'error' : 'inactive',
+      error: incompatibility,
+      incompatibility,
     });
     return true;
   }
@@ -72,10 +79,12 @@ export class PluginRegistry {
       description: entry.manifest.description,
       icon: entry.manifest.icon,
       permissions: entry.manifest.permissions,
+      contributes: entry.manifest.contributes,
       source: entry.source,
       enabled: entry.enabled,
       status: entry.status,
       error: entry.error,
+      incompatibility: entry.incompatibility,
     }));
   }
 
@@ -91,7 +100,7 @@ export class PluginRegistry {
   /** Activate one plugin; errors are captured on the entry, never thrown */
   async activate(id: string): Promise<boolean> {
     const entry = this.entries.get(id);
-    if (!entry || entry.status === 'active') return false;
+    if (!entry || entry.status === 'active' || entry.incompatibility) return false;
 
     try {
       const result = await this.activator(entry);
@@ -137,6 +146,7 @@ export class PluginRegistry {
   async setEnabled(id: string, enabled: boolean): Promise<boolean> {
     const entry = this.entries.get(id);
     if (!entry) return false;
+    if (entry.incompatibility) return false;
 
     entry.enabled = enabled;
     if (enabled && entry.status === 'inactive') {
