@@ -73,7 +73,8 @@ import { SessionList, type ChatGroupingMode } from "./SessionList"
 import { MainContentPanel } from "./MainContentPanel"
 import { PanelStackContainer } from "./PanelStackContainer"
 import { PluginPaneHost } from "@/plugins/PluginPaneHost"
-import { usePluginPaneState } from "@/plugins/panel-store"
+import { usePluginPaneVisible } from "@/plugins/panel-store"
+import { initializePluginRuntime } from "@/plugins/runtime"
 import { CompactSessionListFilter } from "./CompactSessionListFilter"
 import type { ChatDisplayHandle } from "./ChatDisplay"
 import { LeftSidebar } from "./LeftSidebar"
@@ -561,10 +562,11 @@ function AppShellContent({
 
   const effectiveSidebarAndNavigatorHidden = isSidebarAndNavigatorHidden || isAutoCompact
 
-  // Plugin pane (right-hand, plugin-contributed). Hidden in compact mode.
-  const pluginPane = usePluginPaneState()
-  const isPluginPaneVisible = !isAutoCompact && pluginPane.isOpen
-    && pluginPane.panels.some((p) => p.key === pluginPane.activePanelKey)
+  // Plugin runtime bootstrap (app-level: plugins activate regardless of
+  // which pane hosts are mounted) + right-edge pane visibility for the
+  // panel stack. Plugin panes are hidden in compact mode.
+  React.useEffect(() => { void initializePluginRuntime() }, [])
+  const isPluginPaneVisible = usePluginPaneVisible('right') && !isAutoCompact
 
   // What's New overlay
   const [showWhatsNew, setShowWhatsNew] = React.useState(false)
@@ -2220,6 +2222,9 @@ function AppShellContent({
           gap: PANEL_GAP,
         }}
       >
+        {/* Left-edge plugin pane + toggle rail (renders nothing without plugin panels) */}
+        {!isAutoCompact && <PluginPaneHost location="left" />}
+
         <PanelStackContainer
           sidebarSlot={
             <div
@@ -3344,8 +3349,8 @@ function AppShellContent({
         </div>
         )}
 
-        {/* Right-hand plugin pane + toggle rail (renders nothing without plugin panels) */}
-        {!isAutoCompact && <PluginPaneHost />}
+        {/* Right-edge plugin pane + toggle rail (renders nothing without plugin panels) */}
+        {!isAutoCompact && <PluginPaneHost location="right" />}
 
       </div>
 

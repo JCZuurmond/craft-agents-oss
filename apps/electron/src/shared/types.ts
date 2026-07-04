@@ -251,6 +251,8 @@ export interface ElectronAPI {
     setEnabled(id: string, enabled: boolean): Promise<{ ok: boolean; requiresRelaunch: boolean }>
     /** Invoke a main-process handler registered by a plugin (requires 'ipc' permission) */
     invoke(pluginId: string, channel: string, args?: unknown): Promise<unknown>
+    /** Report this window's renderer-side plugin failure (null clears) so Settings shows it */
+    reportRendererStatus(pluginId: string, error: string | null): Promise<void>
     /** Listen for registry changes (enable/disable, activation errors). Returns cleanup. */
     onChanged(callback: (plugins: PluginInfo[]) => void): () => void
   }
