@@ -1,6 +1,12 @@
 import { describe, test, expect } from 'bun:test';
 import { validatePluginManifest } from '../validation.ts';
-import { manifestHasPermission, type PluginManifest } from '../types.ts';
+import {
+  manifestHasPermission,
+  getManifestApiVersion,
+  checkPluginApiCompatibility,
+  PLUGIN_API_VERSION,
+  type PluginManifest,
+} from '../types.ts';
 
 const VALID_MANIFEST = {
   id: 'web-browser',
@@ -78,6 +84,86 @@ describe('validatePluginManifest', () => {
   test('error messages include field paths', () => {
     const result = validatePluginManifest({ ...VALID_MANIFEST, version: 'nope' });
     expect(result.errors.some((e) => e.startsWith('version:'))).toBe(true);
+  });
+
+  test('accepts declarative sidePanels contributions', () => {
+    const result = validatePluginManifest({
+      ...VALID_MANIFEST,
+      contributes: {
+        sidePanels: [
+          { id: 'main', title: 'Main Panel', icon: '🌐' },
+          { id: 'secondary', title: 'Secondary', location: 'left' },
+        ],
+      },
+    });
+    expect(result.valid).toBe(true);
+    expect(result.manifest?.contributes?.sidePanels?.[1]?.location).toBe('left');
+  });
+
+  test('rejects invalid panel locations', () => {
+    const result = validatePluginManifest({
+      ...VALID_MANIFEST,
+      contributes: { sidePanels: [{ id: 'main', title: 'Main', location: 'bottom' }] },
+    });
+    expect(result.valid).toBe(false);
+  });
+
+  test('rejects duplicate panel ids within a plugin', () => {
+    const result = validatePluginManifest({
+      ...VALID_MANIFEST,
+      contributes: {
+        sidePanels: [
+          { id: 'main', title: 'One' },
+          { id: 'main', title: 'Two' },
+        ],
+      },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('duplicate panel ids'))).toBe(true);
+  });
+
+  test('rejects non-slug panel ids', () => {
+    const result = validatePluginManifest({
+      ...VALID_MANIFEST,
+      contributes: { sidePanels: [{ id: 'Main Panel', title: 'Main' }] },
+    });
+    expect(result.valid).toBe(false);
+  });
+
+  test('rejects sidePanels without the ui.sidePanel permission', () => {
+    const result = validatePluginManifest({
+      ...VALID_MANIFEST,
+      permissions: ['storage'],
+      contributes: { sidePanels: [{ id: 'main', title: 'Main' }] },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("'ui.sidePanel'"))).toBe(true);
+  });
+
+  test('accepts a valid apiVersion and rejects invalid ones', () => {
+    expect(validatePluginManifest({ ...VALID_MANIFEST, apiVersion: 1 }).valid).toBe(true);
+    expect(validatePluginManifest({ ...VALID_MANIFEST, apiVersion: 0 }).valid).toBe(false);
+    expect(validatePluginManifest({ ...VALID_MANIFEST, apiVersion: 1.5 }).valid).toBe(false);
+    expect(validatePluginManifest({ ...VALID_MANIFEST, apiVersion: '1' }).valid).toBe(false);
+  });
+});
+
+describe('checkPluginApiCompatibility', () => {
+  const base = validatePluginManifest(VALID_MANIFEST).manifest as PluginManifest;
+
+  test('a manifest without apiVersion targets v1 and is compatible', () => {
+    expect(getManifestApiVersion(base)).toBe(1);
+    expect(checkPluginApiCompatibility(base)).toBeNull();
+  });
+
+  test('the current host version is compatible', () => {
+    expect(checkPluginApiCompatibility({ ...base, apiVersion: PLUGIN_API_VERSION })).toBeNull();
+  });
+
+  test('a future apiVersion is rejected with a readable reason', () => {
+    const reason = checkPluginApiCompatibility({ ...base, apiVersion: PLUGIN_API_VERSION + 1 });
+    expect(reason).toContain(`v${PLUGIN_API_VERSION + 1}`);
+    expect(reason).toContain(`v${PLUGIN_API_VERSION}`);
   });
 });
 

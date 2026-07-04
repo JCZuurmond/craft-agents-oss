@@ -137,4 +137,49 @@ describe('PluginRegistry', () => {
     await registry.setEnabled('a', false);
     expect(changes).toBeGreaterThanOrEqual(2);
   });
+
+  test('an incompatible plugin is listed but can never activate or enable', async () => {
+    let activations = 0;
+    const registry = new PluginRegistry({ activate: () => { activations += 1; } });
+    registry.register(plugin('too-new'), true, { incompatibility: 'Requires plugin API v99' });
+
+    // Registered with status error and the reason, and not enabled.
+    const entry = registry.get('too-new');
+    expect(entry?.status).toBe('error');
+    expect(entry?.enabled).toBe(false);
+    expect(entry?.incompatibility).toBe('Requires plugin API v99');
+
+    // No activation path reaches the activator.
+    await registry.activateEnabled();
+    expect(await registry.activate('too-new')).toBe(false);
+    expect(await registry.setEnabled('too-new', true)).toBe(false);
+    expect(activations).toBe(0);
+    expect(registry.get('too-new')?.enabled).toBe(false);
+
+    // The reason is part of the IPC snapshot for Settings.
+    expect(registry.listInfo()[0]).toMatchObject({
+      id: 'too-new',
+      status: 'error',
+      incompatibility: 'Requires plugin API v99',
+    });
+  });
+
+  test('listInfo carries declarative contributions from the manifest', () => {
+    const registry = new PluginRegistry({ activate: () => {} });
+    const contributing: LoadedPlugin = {
+      manifest: {
+        id: 'panels',
+        name: 'Panels',
+        version: '1.0.0',
+        permissions: ['ui.sidePanel'],
+        contributes: { sidePanels: [{ id: 'main', title: 'Main', location: 'left' }] },
+      },
+      source: 'builtin',
+    };
+    registry.register(contributing, true);
+    expect(registry.listInfo()[0]?.contributes?.sidePanels?.[0]).toMatchObject({
+      id: 'main',
+      location: 'left',
+    });
+  });
 });
