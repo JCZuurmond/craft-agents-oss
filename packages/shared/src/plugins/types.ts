@@ -15,12 +15,20 @@
  * Capabilities a plugin may request. The host only grants what is declared,
  * and surfaces the declared set to the user in Settings → Plugins.
  *
- * - `ui.sidePanel` — contribute panes to the right-hand plugin pane host
+ * - `ui.sidePanel` — contribute panes to the plugin pane hosts (left or right
+ *                    edge of the shell; see PluginPanelLocation)
  * - `ui.webview`  — embed remote web content in a hardened <webview> with a
- *                   dedicated `persist:craft-plugin-{id}` session partition
+ *                   dedicated `persist:craft-plugin-{id}` session partition.
+ *                   This is a sub-capability of a side panel, not a standalone
+ *                   contribution: the <webview> renders inside a panel the
+ *                   plugin contributes via `ui.sidePanel`.
  * - `storage`     — persistent key-value storage scoped to the plugin
  * - `ipc`         — invoke main-process handlers registered for this plugin
  *                   (channels namespaced `plugin:{id}:{channel}`)
+ *
+ * Reserved (documented, intentionally not implemented yet — see
+ * docs/plugins/DESIGN.md): `events.read` for a read-only client mirror of the
+ * WorkspaceEventBus agent/tool events.
  */
 export const PLUGIN_PERMISSIONS = [
   'ui.sidePanel',
@@ -30,6 +38,91 @@ export const PLUGIN_PERMISSIONS = [
 ] as const;
 
 export type PluginPermission = (typeof PLUGIN_PERMISSIONS)[number];
+
+// ============================================================
+// Plugin API versioning
+// ============================================================
+
+/**
+ * The plugin API version this host implements. Bumped when the plugin↔host
+ * contract (PluginContext surfaces, manifest semantics, IPC envelope) changes
+ * incompatibly. Manifests pin the version they target via `apiVersion`
+ * (missing = 1); hosts refuse to activate plugins that target a version they
+ * cannot satisfy, surfacing the reason in Settings instead of failing
+ * silently on upgrade.
+ */
+export const PLUGIN_API_VERSION = 1;
+
+/** Oldest manifest apiVersion this host still activates */
+export const MIN_SUPPORTED_PLUGIN_API_VERSION = 1;
+
+/** The API version a manifest targets (missing = 1, the initial version) */
+export function getManifestApiVersion(manifest: PluginManifest): number {
+  return manifest.apiVersion ?? 1;
+}
+
+/**
+ * Check whether this host can activate a plugin targeting the manifest's
+ * apiVersion. Returns a human-readable incompatibility reason, or null when
+ * compatible.
+ */
+export function checkPluginApiCompatibility(manifest: PluginManifest): string | null {
+  const target = getManifestApiVersion(manifest);
+  if (target > PLUGIN_API_VERSION) {
+    return `Requires plugin API v${target}; this app provides v${PLUGIN_API_VERSION}. Update the app to use this plugin.`;
+  }
+  if (target < MIN_SUPPORTED_PLUGIN_API_VERSION) {
+    return `Targets plugin API v${target}, which this app no longer supports (minimum v${MIN_SUPPORTED_PLUGIN_API_VERSION}). Update the plugin.`;
+  }
+  return null;
+}
+
+// ============================================================
+// Declarative contributions (manifest `contributes` block)
+// ============================================================
+
+/**
+ * Shell edges that host plugin side panels. New UI locations become new
+ * members of this union plus a host mount — a data change, not a new
+ * architecture (the contribution-slot indirection from REVIEW.md M1).
+ */
+export const PLUGIN_PANEL_LOCATIONS = ['left', 'right'] as const;
+
+export type PluginPanelLocation = (typeof PLUGIN_PANEL_LOCATIONS)[number];
+
+export const DEFAULT_PLUGIN_PANEL_LOCATION: PluginPanelLocation = 'right';
+
+/**
+ * A side panel declared statically in the manifest. Declared panels are
+ * introspectable without running plugin code (Settings can list them) and
+ * enable lazy activation: the host renders the panel's toggle button from
+ * this data and only activates the plugin when the panel is first opened.
+ * The plugin's renderer entry supplies the panel component at activation
+ * time via `ctx.ui.registerSidePanel()` with the same panel id.
+ */
+export interface PluginSidePanelDeclaration {
+  /** Panel id, unique within the plugin (slug-style) */
+  id: string;
+  /** Title shown in the pane header and toggle-rail tooltip */
+  title: string;
+  /** Emoji shown in the toggle rail (falls back to the manifest icon) */
+  icon?: string;
+  /** Which shell edge hosts the panel (default 'right') */
+  location?: PluginPanelLocation;
+}
+
+/**
+ * Static contribution metadata — what a plugin offers, separated from what it
+ * does (`activate()`), following the VS Code/Eclipse declarative model.
+ *
+ * Reserved vocabulary (documented, intentionally not implemented yet):
+ * `commands`, `settingsPages`, `statusItems`, and a top-level manifest
+ * `dependencies` field. See docs/plugins/DESIGN.md before adding any of them.
+ */
+export interface PluginContributions {
+  /** Side panels rendered by the plugin pane hosts (requires 'ui.sidePanel') */
+  sidePanels?: PluginSidePanelDeclaration[];
+}
 
 /** Entry points relative to the plugin directory (informational for built-in plugins) */
 export interface PluginEntries {
@@ -53,6 +146,14 @@ export interface PluginManifest {
   icon?: string;
   /** Declared capabilities — the host grants nothing else */
   permissions: PluginPermission[];
+  /**
+   * Plugin API version this plugin targets (missing = 1). Hosts refuse to
+   * activate plugins targeting a version outside their supported range and
+   * surface the reason in Settings (see checkPluginApiCompatibility).
+   */
+  apiVersion?: number;
+  /** Static contribution metadata (introspectable without running code) */
+  contributes?: PluginContributions;
   /** Entry points relative to the plugin directory */
   entries?: PluginEntries;
   /**
@@ -82,6 +183,12 @@ export interface PluginRegistryEntry extends LoadedPlugin {
   status: PluginStatus;
   /** Populated when status === 'error' */
   error?: string;
+  /**
+   * Populated when the host cannot activate this plugin at all (e.g. it
+   * targets an unsupported apiVersion). Incompatible plugins are listed in
+   * Settings with this reason but can never be activated or enabled.
+   */
+  incompatibility?: string;
 }
 
 /**
@@ -95,10 +202,14 @@ export interface PluginInfo {
   description?: string;
   icon?: string;
   permissions: PluginPermission[];
+  /** Static contribution metadata declared in the manifest */
+  contributes?: PluginContributions;
   source: PluginSource;
   enabled: boolean;
   status: PluginStatus;
   error?: string;
+  /** Set when the host can never activate this plugin (see PluginRegistryEntry) */
+  incompatibility?: string;
 }
 
 // ============================================================
