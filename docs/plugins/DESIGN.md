@@ -92,9 +92,13 @@ credentials, or the agent's environment.
 Main is bundled with esbuild, preload with esbuild, renderer with Vite
 (single bundle; no dynamic plugin import infrastructure exists). Therefore v1
 plugins are **bundled plugins**: code ships in-tree under
-`apps/electron/src/plugins/<id>/` and is registered in one data file
-(`apps/electron/src/plugins/index.ts`). The loader additionally discovers
-**external manifests** under `~/.craft-agent/plugins/<id>/plugin.json` so the
+`apps/electron/src/plugins/<id>/` and is registered in three data files —
+`manifests.ts` (manifest, imported by both processes), `renderer-entries.ts`
+(renderer activate, renderer-only), and `main-entries.ts` (main activate,
+main-only). The split exists because manifests are plain data consumed by both
+processes while entries must never leak React into main or Node into the
+renderer. The loader additionally discovers **external manifests** under
+`~/.craft-agent/plugins/<id>/plugin.json` so the
 registry/settings/enable-disable machinery already treats plugins as data;
 loading external *code* is future work (see "Future work").
 
@@ -104,18 +108,40 @@ loading external *code* is future work (see "Future work").
 
 ```jsonc
 {
-  "id": "web-browser",            // slug, unique
-  "name": "Browser Pane",         // display name
+  "id": "hello-pane",             // slug, unique
+  "name": "Hello Pane",           // display name
   "version": "0.1.0",             // semver
   "description": "…",             // optional
-  "icon": "🌐",                   // optional, emoji or URL (same rules as skills)
-  "permissions": ["ui.sidePanel", "ui.webview"],
+  "icon": "👋",                   // optional, emoji or URL (same rules as skills)
+  "apiVersion": 1,                // plugin API version targeted (optional, default 1)
+  "permissions": ["ui.sidePanel"],
+  "contributes": {                // static contributions (introspectable without code)
+    "sidePanels": [{ "id": "main", "title": "Hello", "icon": "👋", "location": "right" }]
+  },
   "entries": { "renderer": "renderer.tsx" }, // entry points (informational for bundled plugins)
   "defaultEnabled": true          // optional, default false for external plugins
 }
 ```
 
 Validated with zod (`validatePluginManifest`), mirroring automations.
+
+**Declarative contributions (`contributes`).** Static metadata about what a
+plugin offers is separated from what it does (`activate()`), following the
+VS Code/Eclipse model. Declared side panels power three things without running
+any plugin code: Settings can list them, the pane hosts render their toggle
+buttons from manifest data alone, and activation becomes **lazy** — a plugin
+with declared panels only activates when one of its panels is first opened
+(plugins without declarative contributions still activate eagerly at startup,
+since their contributions exist only in code). The declaration is the source
+of truth for title/icon/location; `ctx.ui.registerSidePanel()` with the same
+panel id supplies the component at activation time.
+
+**API versioning (`apiVersion`).** The host advertises `PLUGIN_API_VERSION`
+(from `@craft-agent/shared/plugins`); a manifest pins the version it targets
+(missing = 1). A plugin targeting a version the host cannot satisfy is
+registered as permanently errored — listed in Settings with the reason,
+never activated, never enable-able — instead of breaking silently on an app
+upgrade. This is the `engines.vscode` lesson applied to the plugin contract.
 
 ### Permissions
 
@@ -124,19 +150,31 @@ Settings → Plugins:
 
 | Permission | Grants |
 |---|---|
-| `ui.sidePanel` | register panes in the right-hand plugin pane host |
-| `ui.webview` | embed remote web content in a hardened `<webview>` (dedicated `persist:craft-plugin-<id>` partition) |
+| `ui.sidePanel` | register panels in the plugin pane hosts (left or right shell edge) |
+| `ui.webview` | embed remote web content in a hardened `<webview>` (dedicated `persist:craft-plugin-<id>` partition); a sub-capability of a side panel, listed as a permission because it changes the window-level security posture |
 | `storage` | persistent key-value storage scoped to the plugin |
 | `ipc` | invoke main-process handlers registered for this plugin (namespaced `plugin:<id>:<channel>`) |
 
-No permission grants access to credentials, app config, sessions, or Node APIs.
-Undeclared capability access throws.
+No sanctioned `PluginContext` surface exposes credentials, app config,
+sessions, or Node APIs. Undeclared capability access throws. See
+[SECURITY.md](./SECURITY.md) for what is enforcement versus ergonomics — the
+honest version matters.
+
+**Reserved vocabulary (do not reinvent when the need arrives):**
+`contributes.commands`, `contributes.settingsPages`, `contributes.statusItems`
+for future contribution kinds; an `events.read` permission for a read-only
+client mirror of the automations `WorkspaceEventBus` (reuse that bus — never
+fork it); a manifest `dependencies` field for inter-plugin ordering. These are
+deliberately documented-but-unbuilt so v1 stays small while the names stay
+stable.
 
 ### Lifecycle
 
 `discover → register → (enabled?) activate → deactivate/dispose`
 
 - Discovery: built-in manifest list + `~/.craft-agent/plugins/*/plugin.json`.
+- Registration: plugins targeting an unsupported `apiVersion` register as
+  permanently errored with the reason (never activated or enabled).
 - Enable/disable state: `~/.craft-agent/plugins.json` (app-level, same tier as
   `config.json`/`preferences.json`). Toggling is live: the renderer host
   activates/deactivates without an app restart (matching the app's "no
@@ -146,6 +184,15 @@ Undeclared capability access throws.
 - Activation: `activate(ctx)` returns an optional disposable; every
   registration made through `ctx` is tracked and auto-disposed on deactivate.
   A throwing plugin is marked `status: 'error'` and never takes the host down.
+  Renderer-side: plugins with declared panels activate **lazily** on first
+  panel open; plugins without declarative contributions activate eagerly at
+  startup. The renderer runtime is bootstrapped at app level (an AppShell
+  effect), not by any pane host — plugins activate even in layouts that mount
+  no pane host (e.g. compact mode).
+- Failure visibility: renderer activation failures and panel render crashes
+  are reported per window to the main host (`__plugins:reportRendererStatus`)
+  and merged into the Settings status; contributed components render inside an
+  error boundary with a retry affordance.
 
 ### Context object (`PluginContext`)
 
@@ -162,37 +209,51 @@ interface PluginContext {
 
 ## Extension-point inventory
 
-1. **Right side pane** (`ui.sidePanel`) — `ctx.ui.registerSidePanel({ id,
-   title, icon, component })`. Mounts into `PluginPaneHost`, the one additive
-   AppShell seam (the previously-unused right-sidebar slot). Host owns
-   visibility, focus, width, resize sash, and a toggle rail; state persists in
-   `localStorage` under central `KEYS`.
+1. **Side panels** (`ui.sidePanel`) — declared in `contributes.sidePanels`
+   (introspectable, lazy) and/or registered imperatively via
+   `ctx.ui.registerSidePanel({ id, title, icon, location, component })`.
+   The panel store is a contribution-slot registry keyed by `location`
+   (`'left' | 'right'`, default `'right'`); AppShell mounts one
+   `PluginPaneHost` per edge at its pre-existing layout anchors. A new UI
+   location is a new member of `PLUGIN_PANEL_LOCATIONS` plus one host mount —
+   a data change, not a new architecture. Each edge owns its visibility,
+   focus, width, resize sash, and toggle rail; state persists per window
+   (sessionStorage) with a `localStorage` seed under central `KEYS`, so
+   multiple windows never fight over pane state.
 2. **Hardened web embed** (`ui.webview`) — per-plugin session partition +
-   `will-attach-webview` enforcement in main. This is a *framework* capability;
-   the browser plugin is just its first consumer.
+   `will-attach-webview` enforcement plus continuous navigation policing in
+   main. This is a *framework* capability usable by any panel that embeds web
+   content.
 3. **Main-process capabilities** (`ipc`) — main-side plugin modules register
    handlers via `PluginMainContext.handle(channel, fn)`; renderer reaches them
    through `ctx.invoke`. Channels are namespaced and permission-gated
-   (`__plugins:invoke` rejects undeclared/disabled plugins).
+   (`__plugins:invoke` rejects undeclared/disabled plugins and untrusted
+   senders).
 4. **Scoped storage** (`storage`) — namespaced persistent KV per plugin.
 5. **Registry & settings surface** — Settings → Plugins lists every discovered
-   plugin (built-in and external) with permissions and an enable/disable
-   switch; changes broadcast to all windows (`__plugins:changed`).
+   plugin (built-in and external) with permissions, declared contributions,
+   and an enable/disable switch; changes broadcast to all windows
+   (`__plugins:changed`). External plugins are labelled manifest-only;
+   incompatible plugins show their reason with the toggle disabled.
 
 ## How core stays decoupled
 
-Core changes are additive and generic (nothing knows the browser plugin exists):
+Core changes are additive and generic (core knows no specific plugin):
 
-- `AppShell.tsx`: mount `PluginPaneHost` in the existing right-sidebar seam and
-  feed `isRightSidebarVisible` from it.
+- `AppShell.tsx`: one runtime-bootstrap effect, one `PluginPaneHost` mount per
+  edge at the pre-existing layout anchors, and `isRightSidebarVisible` fed
+  from the exported `usePluginPaneVisible('right')` selector (no plugin logic
+  inline in AppShell).
 - `window-manager.ts`: `webviewTag` computed from "any enabled plugin declares
   `ui.webview`" instead of hardcoded `false`.
-- `main/index.ts`: one `initializePluginHost()` call.
+- `main/index.ts`: one `initializePluginHost()` + one `disposePluginHost()` call.
 - `preload/bootstrap.ts`: `plugins.*` direct-IPC methods.
 - Settings registry/menu/i18n: one `plugins` page entry.
 
-Everything else is new files. Removing `apps/electron/src/plugins/web-browser/`
-plus its one registration line removes the browser pane completely.
+Everything else is new files. With the registration maps empty
+(`BUILTIN_PLUGIN_MANIFESTS`, `RENDERER_PLUGIN_ENTRIES`, `MAIN_PLUGIN_ENTRIES`),
+the app is pixel-identical to vanilla; removing a bundled plugin's directory
+plus its registration lines removes it completely.
 
 ## Future work (explicitly out of scope for v1)
 
