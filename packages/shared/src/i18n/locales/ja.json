@@ -1114,6 +1114,7 @@
   "settings.permissions.workspaceCustomizations": "Workspaceのカスタマイズ",
   "settings.permissions.workspaceCustomizationsDesc": "上記のアプリのデフォルトを拡張するWorkspaceレベルのパターンです。",
   "settings.plugins.activationError": "有効化エラー",
+  "settings.plugins.commands": "コマンド",
   "settings.plugins.description": "機能やサイドパネルを追加する拡張機能",
   "settings.plugins.externalManifestOnly": "マニフェストのみ — このバージョンでは外部プラグインのコードは読み込まれません",
   "settings.plugins.incompatible": "非互換",

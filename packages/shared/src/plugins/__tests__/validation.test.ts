@@ -4,6 +4,8 @@ import {
   manifestHasPermission,
   getManifestApiVersion,
   checkPluginApiCompatibility,
+  parseActivationEvent,
+  shouldActivateOnStartup,
   PLUGIN_API_VERSION,
   type PluginManifest,
 } from '../types.ts';
@@ -146,6 +148,100 @@ describe('validatePluginManifest', () => {
     expect(validatePluginManifest({ ...VALID_MANIFEST, apiVersion: 1.5 }).valid).toBe(false);
     expect(validatePluginManifest({ ...VALID_MANIFEST, apiVersion: '1' }).valid).toBe(false);
   });
+
+  const COMMANDS_MANIFEST = {
+    ...VALID_MANIFEST,
+    permissions: ['commands'],
+    contributes: {
+      commands: [
+        { id: 'open', title: 'Open Browser', keybinding: 'mod+shift+b' },
+        { id: 'reload', title: 'Reload Page' },
+      ],
+    },
+  };
+
+  test('accepts declarative command contributions with keybindings', () => {
+    const result = validatePluginManifest(COMMANDS_MANIFEST);
+    expect(result.valid).toBe(true);
+    expect(result.manifest?.contributes?.commands?.[0]?.keybinding).toBe('mod+shift+b');
+  });
+
+  test('rejects commands without the commands permission', () => {
+    const result = validatePluginManifest({ ...COMMANDS_MANIFEST, permissions: ['storage'] });
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("'commands'"))).toBe(true);
+  });
+
+  test('rejects duplicate command ids within a plugin', () => {
+    const result = validatePluginManifest({
+      ...COMMANDS_MANIFEST,
+      contributes: {
+        commands: [
+          { id: 'open', title: 'One' },
+          { id: 'open', title: 'Two' },
+        ],
+      },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('duplicate command ids'))).toBe(true);
+  });
+
+  test('rejects malformed and modifier-less keybindings', () => {
+    for (const keybinding of ['b', 'shift+b', 'mod+', 'super+b', 'mod+F1', 'mod shift b']) {
+      const result = validatePluginManifest({
+        ...COMMANDS_MANIFEST,
+        contributes: { commands: [{ id: 'open', title: 'Open', keybinding }] },
+      });
+      expect(result.valid).toBe(false);
+    }
+  });
+
+  test('accepts alt-modifier and special-key keybindings', () => {
+    for (const keybinding of ['alt+p', 'mod+left', 'mod+alt+[', 'mod+shift+escape']) {
+      const result = validatePluginManifest({
+        ...COMMANDS_MANIFEST,
+        contributes: { commands: [{ id: 'open', title: 'Open', keybinding }] },
+      });
+      expect(result.valid).toBe(true);
+    }
+  });
+
+  test('accepts activation events referencing declared contributions', () => {
+    const result = validatePluginManifest({
+      ...VALID_MANIFEST,
+      permissions: ['ui.sidePanel', 'commands'],
+      contributes: {
+        sidePanels: [{ id: 'main', title: 'Main' }],
+        commands: [{ id: 'open', title: 'Open' }],
+      },
+      activationEvents: ['onStartup', 'onPanel:main', 'onCommand:open'],
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  test('rejects activation events referencing undeclared ids', () => {
+    const missingPanel = validatePluginManifest({
+      ...VALID_MANIFEST,
+      activationEvents: ['onPanel:ghost'],
+    });
+    expect(missingPanel.valid).toBe(false);
+    expect(missingPanel.errors.some((e) => e.includes('onPanel:ghost'))).toBe(true);
+
+    const missingCommand = validatePluginManifest({
+      ...COMMANDS_MANIFEST,
+      activationEvents: ['onCommand:ghost'],
+    });
+    expect(missingCommand.valid).toBe(false);
+    expect(missingCommand.errors.some((e) => e.includes('onCommand:ghost'))).toBe(true);
+  });
+
+  test('rejects malformed and duplicate activation events', () => {
+    expect(validatePluginManifest({ ...VALID_MANIFEST, activationEvents: ['onLoad'] }).valid).toBe(false);
+    expect(validatePluginManifest({ ...VALID_MANIFEST, activationEvents: ['onPanel:'] }).valid).toBe(false);
+    expect(
+      validatePluginManifest({ ...VALID_MANIFEST, activationEvents: ['onStartup', 'onStartup'] }).valid,
+    ).toBe(false);
+  });
 });
 
 describe('checkPluginApiCompatibility', () => {
@@ -173,5 +269,52 @@ describe('manifestHasPermission', () => {
   test('reports declared and undeclared permissions', () => {
     expect(manifestHasPermission(manifest, 'ui.webview')).toBe(true);
     expect(manifestHasPermission(manifest, 'ipc')).toBe(false);
+  });
+});
+
+describe('parseActivationEvent', () => {
+  test('parses the three event kinds', () => {
+    expect(parseActivationEvent('onStartup')).toEqual({ kind: 'onStartup' });
+    expect(parseActivationEvent('onPanel:main')).toEqual({ kind: 'onPanel', panelId: 'main' });
+    expect(parseActivationEvent('onCommand:open')).toEqual({ kind: 'onCommand', commandId: 'open' });
+  });
+
+  test('returns null for malformed events', () => {
+    for (const event of ['onLoad', 'onPanel:', 'onCommand:', 'startup', '']) {
+      expect(parseActivationEvent(event)).toBeNull();
+    }
+  });
+});
+
+describe('shouldActivateOnStartup', () => {
+  const base = validatePluginManifest(VALID_MANIFEST).manifest as PluginManifest;
+  const panel = { id: 'main', title: 'Main' };
+  const command = { id: 'open', title: 'Open' };
+
+  test('explicit onStartup wins even with declared contributions', () => {
+    expect(
+      shouldActivateOnStartup({
+        ...base,
+        contributes: { sidePanels: [panel] },
+        activationEvents: ['onStartup', 'onPanel:main'],
+      }),
+    ).toBe(true);
+  });
+
+  test('explicit lazy-only events defer activation', () => {
+    expect(
+      shouldActivateOnStartup({
+        ...base,
+        contributes: { sidePanels: [panel] },
+        activationEvents: ['onPanel:main'],
+      }),
+    ).toBe(false);
+  });
+
+  test('inferred default: declarative contributions are lazy, code-only is eager', () => {
+    expect(shouldActivateOnStartup(base)).toBe(true);
+    expect(shouldActivateOnStartup({ ...base, contributes: { sidePanels: [panel] } })).toBe(false);
+    expect(shouldActivateOnStartup({ ...base, contributes: { commands: [command] } })).toBe(false);
+    expect(shouldActivateOnStartup({ ...base, contributes: {} })).toBe(true);
   });
 });

@@ -135,7 +135,7 @@ export function useActionRegistry() {
 // Utility functions
 // ─────────────────────────────────────────────
 
-function matchesHotkey(e: KeyboardEvent, hotkey: string): boolean {
+export function matchesHotkey(e: KeyboardEvent, hotkey: string): boolean {
   const parts = hotkey.toLowerCase().split('+')
   const key = parts[parts.length - 1]
   const needsMod = parts.includes('mod')
