@@ -7,20 +7,24 @@
  * host live, and reports renderer-side failures back to main so Settings
  * shows the truth for this window too.
  *
- * Activation policy:
- * - Plugins whose manifest declares `contributes.sidePanels` are activated
- *   lazily: their panels appear in the toggle rail from manifest data alone,
- *   and the plugin's `activate()` only runs when a panel is first opened.
- * - Plugins without declarative contributions are activated eagerly at
- *   startup — their contributions exist only in code, so there is nothing to
- *   render until `activate()` runs.
+ * Activation policy (the VS Code activationEvents model; see
+ * shouldActivateOnStartup for the default when a manifest declares none):
+ * - Plugins with declared side panels activate lazily when a panel is first
+ *   opened; their panels appear in the toggle rail from manifest data alone.
+ * - Plugins with declared commands activate lazily when a command first
+ *   executes (keybinding or executeCommand) — keybindings bind from manifest
+ *   data alone.
+ * - Plugins declaring `onStartup` (or with no declarative contributions —
+ *   their contributions exist only in code) activate eagerly at startup.
  * - Toggling a plugin on in Settings activates it immediately (the user asked
- *   for it now); toggling off deactivates and removes its panels everywhere.
+ *   for it now); toggling off deactivates and removes its panels and
+ *   keybindings everywhere.
  */
 
 import { PluginRegistry } from '@craft-agent/shared/plugins/registry'
 import {
   checkPluginApiCompatibility,
+  shouldActivateOnStartup,
   type LoadedPlugin,
   type PluginDisposable,
   type PluginManifest,
@@ -37,6 +41,13 @@ import {
   markPluginPanelsError,
   resetPluginPanel,
 } from './panel-store'
+import {
+  declarePluginCommands,
+  removePluginCommands,
+  setPluginCommandActivationHandler,
+  initializePluginKeybindings,
+} from './command-store'
+import { pluginHostHooks } from './host-hooks'
 
 let registry: PluginRegistry | null = null
 let initializePromise: Promise<void> | null = null
@@ -48,15 +59,32 @@ function declaredPanels(manifest: PluginManifest) {
   return manifest.contributes?.sidePanels ?? []
 }
 
+function declaredCommands(manifest: PluginManifest) {
+  return manifest.contributes?.commands ?? []
+}
+
+/** Does the manifest declare anything renderable/bindable without code? */
+function hasDeclarativeContributions(manifest: PluginManifest): boolean {
+  return declaredPanels(manifest).length > 0 || declaredCommands(manifest).length > 0
+}
+
 function activateRendererPlugin(plugin: LoadedPlugin): PluginDisposable[] {
-  const entry = RENDERER_PLUGIN_ENTRIES[plugin.manifest.id]
+  const pluginId = plugin.manifest.id
+  const entry = RENDERER_PLUGIN_ENTRIES[pluginId]
   if (!entry) return []
 
   const created = createPluginContext(plugin.manifest)
   try {
     const result = entry(created.ctx)
     const returned = result == null ? [] : Array.isArray(result) ? result : [result]
-    return [...returned, { dispose: created.dispose }]
+    pluginHostHooks.emit('plugin:activated', { pluginId })
+    // First in the list = disposed last (reverse-order teardown), so the
+    // deactivation hook fires after the plugin's own disposables ran.
+    return [
+      { dispose: () => pluginHostHooks.emit('plugin:deactivated', { pluginId }) },
+      ...returned,
+      { dispose: created.dispose },
+    ]
   } catch (error) {
     // Roll back anything the entry registered before throwing, then let the
     // registry record the error state.
@@ -120,21 +148,25 @@ export function initializePluginRuntime(): Promise<void> {
     const infos = await pluginsApi.list()
     const enabledById = new Map(infos.map((info) => [info.id, info.enabled]))
 
+    // Declared commands activate their plugin on first execution.
+    setPluginCommandActivationHandler(ensurePluginActive)
+    initializePluginKeybindings()
+
     for (const manifest of BUILTIN_PLUGIN_MANIFESTS) {
-      const panels = declaredPanels(manifest)
-      if (!RENDERER_PLUGIN_ENTRIES[manifest.id] && panels.length === 0) continue
+      if (!RENDERER_PLUGIN_ENTRIES[manifest.id] && !hasDeclarativeContributions(manifest)) continue
       const incompatibility = checkPluginApiCompatibility(manifest) ?? undefined
       const enabled = enabledById.get(manifest.id) ?? false
       registry.register({ manifest, source: 'builtin' }, enabled, { incompatibility })
-      if (enabled && !incompatibility && panels.length > 0) {
-        declarePluginPanels(manifest.id, panels, manifest.icon)
+      if (enabled && !incompatibility) {
+        declareContributions(manifest)
       }
     }
 
-    // Eager activation only for plugins with no declared panels; declared
-    // panels activate lazily via ensurePluginPanelReady on first open.
+    // Eager activation only for plugins whose activation events (explicit or
+    // inferred) say 'onStartup'; declared panels/commands activate lazily via
+    // ensurePluginPanelReady / the command activation handler on first use.
     for (const entry of registry.list()) {
-      if (entry.enabled && !entry.incompatibility && declaredPanels(entry.manifest).length === 0) {
+      if (entry.enabled && !entry.incompatibility && shouldActivateOnStartup(entry.manifest)) {
         await activateOnce(entry.manifest.id)
       }
     }
@@ -144,10 +176,10 @@ export function initializePluginRuntime(): Promise<void> {
         const entry = registry?.get(info.id)
         if (!entry || entry.enabled === info.enabled) continue
         if (info.enabled) {
-          // Live toggle-on: declare panels and activate right away — lazy
-          // startup exists for the paint path, not for explicit user intent.
-          const panels = declaredPanels(entry.manifest)
-          if (panels.length > 0) declarePluginPanels(info.id, panels, entry.manifest.icon)
+          // Live toggle-on: declare contributions and activate right away —
+          // lazy startup exists for the paint path, not for explicit user
+          // intent.
+          declareContributions(entry.manifest)
           void registry?.setEnabled(info.id, true).then(() => {
             const failed = registry?.get(info.id)
             if (failed?.status === 'error') {
@@ -155,7 +187,10 @@ export function initializePluginRuntime(): Promise<void> {
             }
           })
         } else {
-          void registry?.setEnabled(info.id, false).then(() => removePluginPanels(info.id))
+          void registry?.setEnabled(info.id, false).then(() => {
+            removePluginPanels(info.id)
+            removePluginCommands(info.id)
+          })
         }
       }
     })
@@ -165,9 +200,38 @@ export function initializePluginRuntime(): Promise<void> {
     subscribePluginPane(syncRendererStatusToMain)
 
     window.addEventListener('beforeunload', () => registry?.disposeAll())
+
+    pluginHostHooks.emit('app:ready', {
+      pluginIds: registry.list().map((entry) => entry.manifest.id),
+    })
   })()
 
   return initializePromise
+}
+
+/** Seed a manifest's declarative contributions (panels + command keybindings) */
+function declareContributions(manifest: PluginManifest): void {
+  const panels = declaredPanels(manifest)
+  if (panels.length > 0) declarePluginPanels(manifest.id, panels, manifest.icon)
+  const commands = declaredCommands(manifest)
+  if (commands.length > 0) declarePluginCommands(manifest.id, commands)
+}
+
+/**
+ * Lazy-activation entry point for declared commands (mirrors
+ * ensurePluginPanelReady): make sure the plugin behind a declared command is
+ * activated before the command store dispatches it.
+ */
+async function ensurePluginActive(pluginId: string): Promise<void> {
+  await initializePluginRuntime()
+  const entry = registry?.get(pluginId)
+  if (!entry || !entry.enabled || entry.incompatibility) return
+  if (entry.status === 'inactive') {
+    await activateOnce(pluginId)
+  } else if (entry.status === 'error') {
+    // Retry a previously failed activation (mirrors the Settings retry path).
+    await registry?.setEnabled(pluginId, true)
+  }
 }
 
 /**
