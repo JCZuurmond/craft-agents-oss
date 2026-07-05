@@ -11,8 +11,10 @@ import {
   type PluginDisposable,
   type PluginManifest,
 } from '@craft-agent/shared/plugins/types'
-import type { PluginContext, PluginLogger, PluginStorage, PluginUi } from './types'
+import type { PluginCommands, PluginContext, PluginHooks, PluginLogger, PluginStorage, PluginUi } from './types'
 import { registerPluginPanel, panelKey, openPluginPanel, closePluginPane, getPluginPaneState } from './panel-store'
+import { registerPluginCommand, executePluginCommand } from './command-store'
+import { pluginHostHooks } from './host-hooks'
 
 function createLogger(pluginId: string): PluginLogger {
   const prefix = `[plugin:${pluginId}]`
@@ -96,11 +98,32 @@ export function createPluginContext(manifest: PluginManifest): CreatedPluginCont
     ? createStorage(pluginId)
     : deniedSurface(pluginId, 'storage', {} as PluginStorage)
 
+  const commands: PluginCommands = manifestHasPermission(manifest, 'commands')
+    ? {
+        register: (commandId, handler) => {
+          const disposable = registerPluginCommand(pluginId, commandId, handler)
+          disposables.push(disposable)
+          return disposable
+        },
+        execute: (qualifiedId, args) => executePluginCommand(qualifiedId, args),
+      }
+    : deniedSurface(pluginId, 'commands', {} as PluginCommands)
+
+  const hooks: PluginHooks = {
+    on: (hook, listener) => {
+      const disposable = pluginHostHooks.on(hook, listener)
+      disposables.push(disposable)
+      return disposable
+    },
+  }
+
   const ctx: PluginContext = {
     manifest,
     logger: createLogger(pluginId),
     storage,
     ui,
+    commands,
+    hooks,
     invoke: (channel, args) => {
       if (!manifestHasPermission(manifest, 'ipc')) {
         return Promise.reject(

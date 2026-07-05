@@ -51,8 +51,20 @@ a host failure.
 |---|---|---|
 | `ui.sidePanel` | panels in the left/right pane hosts | renderer-side gating (ergonomic) |
 | `ui.webview` | a hardened `<webview>` on the plugin's own partition | **main process, on every attach and navigation** |
+| `commands` | command registration/dispatch + declared keybindings | renderer-side gating (ergonomic) |
 | `storage` | KV storage under the plugin's namespace | renderer-side gating (ergonomic) |
 | `ipc` | calls to the plugin's own main-process handlers | **main process, on every invoke** |
+
+Keybindings deserve their own note because they touch user input: a plugin
+binding can only claim the specific declared chord, the chord must include
+`mod` or `alt` (validation), chords equal to a core action default are
+refused at declare time, core shortcuts always win at runtime (capture-phase
+precedence), and plugin bindings never fire while a text input is focused or
+a menu is open. Plugins cannot observe keystrokes through this surface — a
+binding either matches its own chord and runs the plugin's own command, or
+sees nothing. `ctx.hooks` is ungated for the same reason: it only broadcasts
+plugin-framework lifecycle events (plugin/panel/command lifecycle), never
+keys, user content, or session data.
 
 `ui.webview` is a sub-capability of a panel (the `<webview>` renders inside a
 pane the plugin contributes), not a standalone contribution — it sits in the
