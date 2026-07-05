@@ -16,11 +16,11 @@ import {
   markPluginPanelsError,
   resetPluginPanel,
   openPluginPanel,
-  closePluginPane,
   togglePluginPanel,
   getPluginPaneState,
   isPluginPaneVisible,
   panelKey,
+  __setEdgeStateForTests,
 } from '../panel-store'
 import type { PluginPanelProps } from '../types'
 
@@ -31,8 +31,8 @@ beforeEach(() => {
   for (const panel of [...getPluginPaneState().panels]) {
     removePluginPanels(panel.pluginId)
   }
-  closePluginPane('left')
-  closePluginPane('right')
+  __setEdgeStateForTests('left', { activePanelKey: null, isOpen: false, width: 420 })
+  __setEdgeStateForTests('right', { activePanelKey: null, isOpen: false, width: 420 })
 })
 
 describe('declarative panels', () => {
@@ -142,5 +142,21 @@ describe('per-edge visibility', () => {
   test('opening an unknown panel is a no-op', () => {
     openPluginPanel('nope:nope')
     expect(isPluginPaneVisible('right')).toBe(false)
+  })
+
+  test('a restored active panel survives other plugins declaring first (startup order)', () => {
+    // Simulate persisted state from the last session: pane open on p2's
+    // panel, which has not been declared yet in this session.
+    __setEdgeStateForTests('right', { activePanelKey: panelKey('p2', 'b'), isOpen: true, width: 420 })
+
+    // Another plugin declares first — it must not steal or clear the edge.
+    declarePluginPanels('p1', [{ id: 'a', title: 'A' }])
+    expect(getPluginPaneState().edges.right.activePanelKey).toBe(panelKey('p2', 'b'))
+    expect(isPluginPaneVisible('right')).toBe(false) // waiting for p2
+
+    // The restored plugin declares: the pane comes back on its panel.
+    declarePluginPanels('p2', [{ id: 'b', title: 'B' }])
+    expect(getPluginPaneState().edges.right.activePanelKey).toBe(panelKey('p2', 'b'))
+    expect(isPluginPaneVisible('right')).toBe(true)
   })
 })
