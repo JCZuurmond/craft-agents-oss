@@ -26,12 +26,13 @@ import {
   setPluginEnabled,
   manifestHasPermission,
   getPluginWebviewPartition,
+  checkPluginApiCompatibility,
   PLUGIN_WEBVIEW_PARTITION_PREFIX,
   type LoadedPlugin,
   type PluginDisposable,
   type PluginInfo,
   type PluginManifest,
-} from '@craft-agent/shared/plugins'
+} from '@craft-agent/shared/plugins/node'
 import { BUILTIN_PLUGIN_MANIFESTS } from '../plugins/manifests'
 import { MAIN_PLUGIN_ENTRIES } from '../plugins/main-entries'
 
@@ -52,8 +53,45 @@ let registry: PluginRegistry | null = null
 let webviewEnabledAtStartup = false
 const pluginIpcHandlers = new Map<string, PluginIpcHandler>()
 
+/**
+ * Renderer-side failures reported per window (webContents id → plugin id →
+ * error). The renderer runtime activates plugins in its own registry; without
+ * this report channel a plugin that only breaks in the renderer would look
+ * healthy in Settings. Merged into the plugin info snapshots below.
+ */
+const rendererErrorsByWindow = new Map<number, Map<string, string>>()
+
 function ipcHandlerKey(pluginId: string, channel: string): string {
   return `${pluginId}:${channel}`
+}
+
+/**
+ * Only the app's own window renderers may drive the plugin IPC surface.
+ * Plugin <webview> guests are sandboxed without a preload so they cannot
+ * reach ipcRenderer at all — this guard is defense in depth for the case
+ * where any embedded content ever gains an IPC path.
+ */
+function isTrustedPluginIpcSender(event: Electron.IpcMainInvokeEvent): boolean {
+  return event.sender.getType() === 'window'
+}
+
+/** Renderer-reported error for a plugin from any window, if one exists */
+function rendererErrorFor(pluginId: string): string | undefined {
+  for (const errors of rendererErrorsByWindow.values()) {
+    const error = errors.get(pluginId)
+    if (error) return error
+  }
+  return undefined
+}
+
+/** Registry snapshot with per-window renderer failures merged in (S-M2) */
+function currentPluginInfo(): PluginInfo[] {
+  const info = registry?.listInfo() ?? []
+  return info.map((plugin) => {
+    if (plugin.status === 'error') return plugin
+    const rendererError = rendererErrorFor(plugin.id)
+    return rendererError ? { ...plugin, status: 'error' as const, error: rendererError } : plugin
+  })
 }
 
 /** Resolve a webview partition back to its owning plugin id, or null */
@@ -68,6 +106,22 @@ function isAllowedWebviewUrl(src: string | undefined): boolean {
   try {
     const parsed = new URL(src)
     return parsed.protocol === 'https:' || parsed.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Subframes inside a plugin webview may use the schemes ordinary web pages
+ * embed (data:/blob: iframes, about:srcdoc) — blocking those breaks normal
+ * sites, and the guest sandbox + webSecurity already contain them. Privileged
+ * schemes (file:, chrome:, devtools:, custom app protocols) stay blocked.
+ */
+const ALLOWED_WEBVIEW_SUBFRAME_PROTOCOLS = new Set(['https:', 'http:', 'data:', 'blob:', 'about:'])
+
+function isAllowedWebviewSubframeUrl(src: string): boolean {
+  try {
+    return ALLOWED_WEBVIEW_SUBFRAME_PROTOCOLS.has(new URL(src).protocol)
   } catch {
     return false
   }
@@ -127,7 +181,7 @@ function activatePlugin(plugin: LoadedPlugin): PluginDisposable[] {
 
 function broadcastPluginsChanged(): void {
   if (!registry) return
-  const info = registry.listInfo()
+  const info = currentPluginInfo()
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
       window.webContents.send('__plugins:changed', info)
@@ -162,12 +216,16 @@ export async function initializePluginHost(): Promise<void> {
   const config = loadPluginsConfig()
 
   // Built-ins first — an external plugin can never shadow a built-in id.
+  // Plugins targeting an unsupported apiVersion register as permanently
+  // errored: listed in Settings with the reason, never activated (M3).
   for (const manifest of BUILTIN_PLUGIN_MANIFESTS) {
     const plugin: LoadedPlugin = { manifest, source: 'builtin' }
-    registry.register(plugin, isPluginEnabled(manifest, config, 'builtin'))
+    const incompatibility = checkPluginApiCompatibility(manifest) ?? undefined
+    registry.register(plugin, isPluginEnabled(manifest, config, 'builtin'), { incompatibility })
   }
   for (const plugin of loadExternalPlugins()) {
-    registry.register(plugin, isPluginEnabled(plugin.manifest, config, 'user'))
+    const incompatibility = checkPluginApiCompatibility(plugin.manifest) ?? undefined
+    registry.register(plugin, isPluginEnabled(plugin.manifest, config, 'user'), { incompatibility })
   }
 
   await registry.activateEnabled()
@@ -184,18 +242,25 @@ export async function initializePluginHost(): Promise<void> {
 }
 
 function registerPluginIpc(): void {
-  ipcMain.handle('__plugins:list', (): PluginInfo[] => {
-    return registry?.listInfo() ?? []
+  ipcMain.handle('__plugins:list', (event): PluginInfo[] => {
+    if (!isTrustedPluginIpcSender(event)) return []
+    return currentPluginInfo()
   })
 
   ipcMain.handle(
     '__plugins:setEnabled',
-    async (_event, id: unknown, enabled: unknown): Promise<{ ok: boolean; requiresRelaunch: boolean }> => {
+    async (event, id: unknown, enabled: unknown): Promise<{ ok: boolean; requiresRelaunch: boolean }> => {
+      if (!isTrustedPluginIpcSender(event)) {
+        return { ok: false, requiresRelaunch: false }
+      }
       if (!registry || typeof id !== 'string' || typeof enabled !== 'boolean') {
         return { ok: false, requiresRelaunch: false }
       }
       const entry = registry.get(id)
       if (!entry) return { ok: false, requiresRelaunch: false }
+      // Incompatible plugins can never be enabled; don't persist a state the
+      // registry will refuse anyway.
+      if (entry.incompatibility && enabled) return { ok: false, requiresRelaunch: false }
 
       setPluginEnabled(id, enabled)
       await registry.setEnabled(id, enabled)
@@ -211,7 +276,10 @@ function registerPluginIpc(): void {
     },
   )
 
-  ipcMain.handle('__plugins:invoke', async (_event, pluginId: unknown, channel: unknown, args: unknown) => {
+  ipcMain.handle('__plugins:invoke', async (event, pluginId: unknown, channel: unknown, args: unknown) => {
+    if (!isTrustedPluginIpcSender(event)) {
+      throw new Error('Plugin invoke rejected: untrusted sender')
+    }
     if (!registry || typeof pluginId !== 'string' || typeof channel !== 'string') {
       throw new Error('Invalid plugin invoke request')
     }
@@ -227,6 +295,35 @@ function registerPluginIpc(): void {
       throw new Error(`Plugin '${pluginId}' has no handler for channel '${channel}'`)
     }
     return handler(args)
+  })
+
+  // Renderer runtimes report per-window activation/render failures here so
+  // Settings reflects renderer-side status too (error = null clears).
+  ipcMain.handle('__plugins:reportRendererStatus', (event, pluginId: unknown, error: unknown) => {
+    if (!isTrustedPluginIpcSender(event)) return
+    if (!registry || typeof pluginId !== 'string') return
+    if (error !== null && typeof error !== 'string') return
+    if (!registry.get(pluginId)) return
+
+    const windowId = event.sender.id
+    let errors = rendererErrorsByWindow.get(windowId)
+    if (!errors) {
+      errors = new Map()
+      rendererErrorsByWindow.set(windowId, errors)
+      event.sender.once('destroyed', () => {
+        rendererErrorsByWindow.delete(windowId)
+        broadcastPluginsChanged()
+      })
+    }
+
+    const previous = errors.get(pluginId)
+    if (error === null) {
+      errors.delete(pluginId)
+    } else {
+      errors.set(pluginId, error)
+      mainLog.warn(`[plugins] renderer error for '${pluginId}' (window ${windowId}): ${error}`)
+    }
+    if (previous !== (error ?? undefined)) broadcastPluginsChanged()
   })
 }
 
@@ -275,6 +372,40 @@ function installWebviewHardening(): void {
           // unparseable URL — drop it
         }
         return { action: 'deny' }
+      })
+
+      // Continuous navigation policy: the attach-time src check alone would
+      // let an allowed page later wander to file:, javascript:, or a
+      // privileged app scheme. Main-frame navigations keep the strict
+      // http(s)/about:blank allowlist; subframes additionally allow the
+      // schemes ordinary pages embed (see isAllowedWebviewSubframeUrl).
+      const isAllowedNavigation = (url: string, isMainFrame: boolean) =>
+        isMainFrame ? isAllowedWebviewUrl(url) : isAllowedWebviewSubframeUrl(url)
+      const blockDisallowed = (
+        event: { preventDefault(): void },
+        url: string,
+        isMainFrame: boolean,
+        kind: string,
+      ) => {
+        if (isAllowedNavigation(url, isMainFrame)) return
+        mainLog.warn(`[plugins] blocked webview ${kind} to '${url}'`)
+        event.preventDefault()
+      }
+      webviewContents.on('will-navigate', (event, url) => blockDisallowed(event, url, true, 'navigation'))
+      webviewContents.on('will-frame-navigate', (event) =>
+        blockDisallowed(event, event.url, event.isMainFrame, 'frame navigation'))
+      webviewContents.on('will-redirect', (event) =>
+        blockDisallowed(event, event.url, event.isMainFrame, 'redirect'))
+
+      // Embedder-initiated main-frame loads (<webview>.src / loadURL) do not
+      // fire will-navigate; bounce anything disallowed as soon as it starts.
+      // Subframes are left to the preventive guards above — stop() is
+      // contents-wide and would abort the whole page for one bad iframe.
+      webviewContents.on('did-start-navigation', (event) => {
+        if (!event.isMainFrame || event.isSameDocument || isAllowedWebviewUrl(event.url)) return
+        mainLog.warn(`[plugins] aborted webview load of '${event.url}'`)
+        webviewContents.stop()
+        void webviewContents.loadURL('about:blank')
       })
     })
   })
