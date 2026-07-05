@@ -35,6 +35,7 @@ import {
 } from '@craft-agent/shared/plugins/types'
 import * as storage from '@/lib/local-storage'
 import type { PluginPanelProps, PluginSidePanelContribution } from './types'
+import { pluginHostHooks } from './host-hooks'
 
 export type PluginPanelStatus = 'declared' | 'ready' | 'error'
 
@@ -321,20 +322,33 @@ export function resetPluginPanel(key: string): void {
 // Edge visibility mutations (called from pane host UI and plugins)
 // ============================================================
 
+/** `${pluginId}:${panelId}` → hook payload parts (plugin ids contain no ':') */
+function splitPanelKey(key: string): { pluginId: string; panelId: string } {
+  const separator = key.indexOf(':')
+  return { pluginId: key.slice(0, separator), panelId: key.slice(separator + 1) }
+}
+
 export function openPluginPanel(key: string): void {
   const panel = state.panels.find((p) => p.key === key)
   if (!panel) return
+  const wasOpenHere = state.edges[panel.location].isOpen && state.edges[panel.location].activePanelKey === key
   emit(withEdge(state, panel.location, {
     ...state.edges[panel.location],
     activePanelKey: key,
     isOpen: true,
   }))
+  if (!wasOpenHere) {
+    pluginHostHooks.emit('panel:opened', { ...splitPanelKey(key), location: panel.location })
+  }
 }
 
 export function closePluginPane(location: PluginPanelLocation): void {
   const edge = state.edges[location]
   if (!edge.isOpen) return
   emit(withEdge(state, location, { ...edge, isOpen: false }))
+  if (edge.activePanelKey) {
+    pluginHostHooks.emit('panel:closed', { ...splitPanelKey(edge.activePanelKey), location })
+  }
 }
 
 /** Rail click behavior: focus if hidden/other panel, close if already active */

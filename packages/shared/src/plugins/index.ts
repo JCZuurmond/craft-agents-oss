@@ -21,9 +21,15 @@ export {
   manifestHasPermission,
   getManifestApiVersion,
   checkPluginApiCompatibility,
+  qualifiedCommandId,
+  parseActivationEvent,
+  shouldActivateOnStartup,
   type PluginPermission,
   type PluginPanelLocation,
   type PluginSidePanelDeclaration,
+  type PluginCommandDeclaration,
+  type PluginActivationEvent,
+  type ParsedActivationEvent,
   type PluginContributions,
   type PluginEntries,
   type PluginManifest,
@@ -42,6 +48,7 @@ export {
   PluginManifestSchema,
   PluginContributionsSchema,
   PluginSidePanelDeclarationSchema,
+  PluginCommandDeclarationSchema,
   validatePluginManifest,
 } from './validation.ts';
 
@@ -50,3 +57,14 @@ export {
   type PluginActivator,
   type PluginRegistryOptions,
 } from './registry.ts';
+
+export {
+  PluginCommandRegistry,
+  type PluginCommandHandler,
+  type RegisteredPluginCommand,
+} from './commands.ts';
+
+export {
+  PluginHookRegistry,
+  type PluginHookListener,
+} from './hooks.ts';
