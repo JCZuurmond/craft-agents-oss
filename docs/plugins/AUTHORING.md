@@ -173,9 +173,12 @@ export const activate: PluginMainEntry = (ctx) => {
 }
 ```
 
-Channels are namespaced per plugin (`plugin:<id>:<channel>` on the wire); the
-renderer can only reach its own plugin's handlers, and only while the plugin is
-enabled.
+Channels are namespaced per plugin (`plugin:<id>:<channel>` on the wire), and
+the main process validates on every call that the target plugin is enabled and
+declares `ipc`. Note the honest caveat from [SECURITY.md](./SECURITY.md): in a
+shared renderer context the main process cannot attribute *which* in-process
+caller named a plugin id, so "only your own handlers" is a convention the
+typed `ctx.invoke` upholds, not a cross-plugin enforcement boundary.
 
 ## Imports: browser-safe vs. Node
 

@@ -30,6 +30,7 @@ import { RENDERER_PLUGIN_ENTRIES } from '../../plugins/renderer-entries'
 import { createPluginContext } from './context'
 import {
   getPluginPaneState,
+  subscribePluginPane,
   declarePluginPanels,
   removePluginPanels,
   markPluginPanelError,
@@ -65,18 +66,27 @@ function activateRendererPlugin(plugin: LoadedPlugin): PluginDisposable[] {
 }
 
 /**
- * Push renderer-side activation failures (and recoveries) to the main-process
- * host, which merges them into the authoritative Settings status. Without
- * this, a plugin that breaks only in the renderer would look healthy.
+ * Push renderer-side failures (and recoveries) to the main-process host,
+ * which merges them into the authoritative Settings status. Without this, a
+ * plugin that breaks only in the renderer would look healthy. The reported
+ * error is derived from BOTH failure surfaces — the registry (activation
+ * errors) and the panel store (render crashes, unregistered declared
+ * panels) — so an unrelated registry change never wipes a live crash, and a
+ * successful panel retry clears its report.
  */
 function syncRendererStatusToMain(): void {
   const reportStatus = window.electronAPI?.plugins?.reportRendererStatus
   if (!reportStatus || !registry) return
+  const panels = getPluginPaneState().panels
   for (const entry of registry.list()) {
-    const error = entry.status === 'error' ? (entry.error ?? 'Unknown renderer error') : null
-    if (lastReportedError.get(entry.manifest.id) === error) continue
-    lastReportedError.set(entry.manifest.id, error)
-    void reportStatus(entry.manifest.id, error)
+    const id = entry.manifest.id
+    const activationError = entry.status === 'error' ? (entry.error ?? 'Unknown renderer error') : null
+    const erroredPanel = panels.find((p) => p.pluginId === id && p.status === 'error')
+    const error = activationError
+      ?? (erroredPanel ? `Panel '${erroredPanel.key}': ${erroredPanel.error ?? 'error'}` : null)
+    if (lastReportedError.get(id) === error) continue
+    lastReportedError.set(id, error)
+    void reportStatus(id, error)
   }
 }
 
@@ -150,6 +160,10 @@ export function initializePluginRuntime(): Promise<void> {
       }
     })
 
+    // Panel-store changes (crash quarantines, retries, lazy registrations)
+    // feed the same status report as registry changes.
+    subscribePluginPane(syncRendererStatusToMain)
+
     window.addEventListener('beforeunload', () => registry?.disposeAll())
   })()
 
@@ -195,16 +209,12 @@ export async function retryPluginPanel(key: string): Promise<void> {
 
 /**
  * Called by the pane host's error boundary when a contributed component
- * throws during render: quarantine the panel and attribute the failure to the
- * plugin in Settings (main aggregates per-window renderer status).
+ * throws during render: quarantine the panel; the panel-store subscription
+ * then attributes the failure to the plugin in Settings (main aggregates
+ * per-window renderer status), and a successful retry clears it.
  */
-export function reportPluginPanelCrash(key: string, pluginId: string, error: unknown): void {
+export function reportPluginPanelCrash(key: string, _pluginId: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error)
-  markPluginPanelError(key, message)
-  const reportStatus = window.electronAPI?.plugins?.reportRendererStatus
-  if (reportStatus) {
-    const report = `Panel '${key}' crashed: ${message}`
-    lastReportedError.set(pluginId, report)
-    void reportStatus(pluginId, report)
-  }
+  markPluginPanelError(key, `Crashed: ${message}`)
+  syncRendererStatusToMain()
 }

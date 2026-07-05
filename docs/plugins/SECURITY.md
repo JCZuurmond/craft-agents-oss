@@ -88,11 +88,15 @@ process:
      `contextIsolation`, `sandbox`, and `webSecurity` are forced on;
    - only `http(s)`/`about:blank` initial URLs may load.
 3. **Navigation is policed continuously, not just at attach:**
-   - `will-navigate`, `will-frame-navigate`, and `will-redirect` on the guest
-     are blocked unless the target is `http(s)`/`about:blank` — an allowed
-     page cannot wander to `file:`, `data:`, `javascript:`, or a privileged
-     app scheme;
-   - embedder-initiated loads (`<webview>.src` / `loadURL`) bypass
+   - main-frame navigations (`will-navigate`, `will-frame-navigate`,
+     `will-redirect`) are blocked unless the target is `http(s)`/`about:blank`
+     — an allowed page cannot wander to `file:`, `data:`, `javascript:`, or a
+     privileged app scheme;
+   - subframe navigations additionally allow `data:`, `blob:`, and `about:`
+     (ordinary pages embed these constantly; blocking them breaks normal
+     sites) while still blocking `file:` and privileged schemes — subframe
+     containment is otherwise the sandbox + `webSecurity`'s job;
+   - embedder-initiated main-frame loads (`<webview>.src` / `loadURL`) bypass
      `will-navigate` by Electron design, so `did-start-navigation` reactively
      aborts any disallowed load and bounces the main frame to `about:blank`.
      This last layer is reactive rather than preventive; the sandbox +

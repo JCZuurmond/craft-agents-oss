@@ -111,6 +111,22 @@ function isAllowedWebviewUrl(src: string | undefined): boolean {
   }
 }
 
+/**
+ * Subframes inside a plugin webview may use the schemes ordinary web pages
+ * embed (data:/blob: iframes, about:srcdoc) — blocking those breaks normal
+ * sites, and the guest sandbox + webSecurity already contain them. Privileged
+ * schemes (file:, chrome:, devtools:, custom app protocols) stay blocked.
+ */
+const ALLOWED_WEBVIEW_SUBFRAME_PROTOCOLS = new Set(['https:', 'http:', 'data:', 'blob:', 'about:'])
+
+function isAllowedWebviewSubframeUrl(src: string): boolean {
+  try {
+    return ALLOWED_WEBVIEW_SUBFRAME_PROTOCOLS.has(new URL(src).protocol)
+  } catch {
+    return false
+  }
+}
+
 /** Is the partition owned by a currently-enabled plugin with ui.webview? */
 function isAuthorizedWebviewPartition(partition: string | undefined): boolean {
   const pluginId = partitionToPluginId(partition)
@@ -359,25 +375,37 @@ function installWebviewHardening(): void {
       })
 
       // Continuous navigation policy: the attach-time src check alone would
-      // let an allowed page later wander to file:, data:, javascript:, or a
-      // privileged app scheme. Enforce the same allowlist on every page- and
-      // frame-initiated navigation and every server redirect.
-      const blockDisallowed = (event: { preventDefault(): void }, url: string, kind: string) => {
-        if (isAllowedWebviewUrl(url)) return
+      // let an allowed page later wander to file:, javascript:, or a
+      // privileged app scheme. Main-frame navigations keep the strict
+      // http(s)/about:blank allowlist; subframes additionally allow the
+      // schemes ordinary pages embed (see isAllowedWebviewSubframeUrl).
+      const isAllowedNavigation = (url: string, isMainFrame: boolean) =>
+        isMainFrame ? isAllowedWebviewUrl(url) : isAllowedWebviewSubframeUrl(url)
+      const blockDisallowed = (
+        event: { preventDefault(): void },
+        url: string,
+        isMainFrame: boolean,
+        kind: string,
+      ) => {
+        if (isAllowedNavigation(url, isMainFrame)) return
         mainLog.warn(`[plugins] blocked webview ${kind} to '${url}'`)
         event.preventDefault()
       }
-      webviewContents.on('will-navigate', (event, url) => blockDisallowed(event, url, 'navigation'))
-      webviewContents.on('will-frame-navigate', (event) => blockDisallowed(event, event.url, 'frame navigation'))
-      webviewContents.on('will-redirect', (event, url) => blockDisallowed(event, url, 'redirect'))
+      webviewContents.on('will-navigate', (event, url) => blockDisallowed(event, url, true, 'navigation'))
+      webviewContents.on('will-frame-navigate', (event) =>
+        blockDisallowed(event, event.url, event.isMainFrame, 'frame navigation'))
+      webviewContents.on('will-redirect', (event) =>
+        blockDisallowed(event, event.url, event.isMainFrame, 'redirect'))
 
-      // Embedder-initiated loads (<webview>.src / loadURL) do not fire
-      // will-navigate; bounce anything disallowed as soon as it starts.
+      // Embedder-initiated main-frame loads (<webview>.src / loadURL) do not
+      // fire will-navigate; bounce anything disallowed as soon as it starts.
+      // Subframes are left to the preventive guards above — stop() is
+      // contents-wide and would abort the whole page for one bad iframe.
       webviewContents.on('did-start-navigation', (event) => {
-        if (event.isSameDocument || isAllowedWebviewUrl(event.url)) return
+        if (!event.isMainFrame || event.isSameDocument || isAllowedWebviewUrl(event.url)) return
         mainLog.warn(`[plugins] aborted webview load of '${event.url}'`)
         webviewContents.stop()
-        if (event.isMainFrame) void webviewContents.loadURL('about:blank')
+        void webviewContents.loadURL('about:blank')
       })
     })
   })

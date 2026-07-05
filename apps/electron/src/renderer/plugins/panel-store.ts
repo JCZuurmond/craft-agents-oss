@@ -152,24 +152,42 @@ function withEdge(
   return { panels: next.panels, edges }
 }
 
-/** Recompute an edge after panels changed: drop dangling active keys */
-function reconcileEdge(panels: RegisteredPluginPanel[], location: PluginPanelLocation): PluginPaneEdgeState {
+/**
+ * Recompute an edge after panels changed. Only a *removal* of the active
+ * panel reassigns or closes the edge — an active key that simply hasn't been
+ * declared yet (startup restore races plugin declaration order) is left
+ * untouched, so the pane reappears when its panel arrives instead of being
+ * stolen by whichever plugin declares first. Persisted state is only
+ * rewritten when the edge actually changes.
+ */
+function reconcileEdge(
+  oldPanels: RegisteredPluginPanel[],
+  newPanels: RegisteredPluginPanel[],
+  location: PluginPanelLocation,
+): PluginPaneEdgeState {
   const edge = state.edges[location]
-  const edgePanels = panels.filter((p) => p.location === location)
-  if (edge.activePanelKey && edgePanels.some((p) => p.key === edge.activePanelKey)) return edge
-  // Active panel disappeared: fall back to the first remaining panel, or close.
-  const fallback = edgePanels[0]?.key ?? null
-  return {
+  if (!edge.activePanelKey) return edge
+  const key = edge.activePanelKey
+  const isPresent = newPanels.some((p) => p.key === key && p.location === location)
+  if (isPresent) return edge
+  const wasPresent = oldPanels.some((p) => p.key === key && p.location === location)
+  if (!wasPresent) return edge
+  // Active panel was removed: fall back to the first remaining panel, or close.
+  const fallback = newPanels.find((p) => p.location === location)?.key ?? null
+  const next = {
     ...edge,
     activePanelKey: edge.isOpen ? fallback : null,
     isOpen: edge.isOpen && fallback !== null,
   }
+  if (next.activePanelKey === edge.activePanelKey && next.isOpen === edge.isOpen) return edge
+  return next
 }
 
 function emitPanels(panels: RegisteredPluginPanel[]): void {
+  const oldPanels = state.panels
   let next: PluginPaneState = { ...state, panels }
   for (const location of PLUGIN_PANEL_LOCATIONS) {
-    const edge = reconcileEdge(panels, location)
+    const edge = reconcileEdge(oldPanels, panels, location)
     if (edge !== state.edges[location]) {
       next = withEdge(next, location, edge)
     }
@@ -367,4 +385,13 @@ export function isPluginPaneVisible(location: PluginPanelLocation): boolean {
 /** Reactive variant of isPluginPaneVisible for core layout wiring (AppShell) */
 export function usePluginPaneVisible(location: PluginPanelLocation): boolean {
   return useSyncExternalStore(subscribePluginPane, () => isPluginPaneVisible(location))
+}
+
+/**
+ * TEST ONLY: force an edge's state, bypassing panel-existence checks, to
+ * simulate persisted state restored before any plugin has declared its
+ * panels. Never call from product code.
+ */
+export function __setEdgeStateForTests(location: PluginPanelLocation, edge: PluginPaneEdgeState): void {
+  emit({ ...state, edges: { ...state.edges, [location]: edge } })
 }
