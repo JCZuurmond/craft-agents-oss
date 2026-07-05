@@ -89,6 +89,7 @@ export default function PluginsSettingsPage() {
                   ) : (
                     plugins.map((plugin) => {
                       const declaredPanels = plugin.contributes?.sidePanels ?? []
+                      const declaredCommands = plugin.contributes?.commands ?? []
                       // External plugin code is not loaded in this version —
                       // enabling one would be a silent no-op, so the toggle
                       // only allows turning an already-enabled one off.
@@ -106,6 +107,11 @@ export default function PluginsSettingsPage() {
                             declaredPanels.length > 0
                               ? `${t("settings.plugins.panels")}: ${declaredPanels
                                   .map((panel) => `${panel.title} (${panel.location ?? 'right'})`)
+                                  .join(', ')}`
+                              : undefined,
+                            declaredCommands.length > 0
+                              ? `${t("settings.plugins.commands")}: ${declaredCommands
+                                  .map((command) => command.keybinding ? `${command.title} (${command.keybinding})` : command.title)
                                   .join(', ')}`
                               : undefined,
                             manifestOnly ? t("settings.plugins.externalManifestOnly") : undefined,

@@ -993,6 +993,7 @@
   "settings.permissions.workspaceCustomizations": "Munkaterület-testreszabások",
   "settings.permissions.workspaceCustomizationsDesc": "Munkaterület-szintű minták, amelyek kiterjesztik a fenti alkalmazás-alapértelmezéseket.",
   "settings.plugins.activationError": "Aktiválási hiba",
+  "settings.plugins.commands": "Parancsok",
   "settings.plugins.description": "Bővítmények, amelyek funkciókat és oldalpaneleket adnak hozzá",
   "settings.plugins.externalManifestOnly": "Csak manifeszt — a külső bővítmények kódja ebben a verzióban nem töltődik be",
   "settings.plugins.incompatible": "Nem kompatibilis",

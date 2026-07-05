@@ -18,9 +18,14 @@ main-process capabilities through stable extension points.
 
 - **Built-in plugins** ship in-tree under `apps/electron/src/plugins/<id>/`
   and register in one data file each for manifest and entries.
-- **Declarative contributions** (`contributes.sidePanels`) make panels
-  introspectable in Settings and activation lazy (plugin code runs on first
-  panel open, not at startup).
+- **Declarative contributions** (`contributes.sidePanels`,
+  `contributes.commands`) make panels, commands, and keybindings
+  introspectable in Settings and activation lazy — plugin code runs on first
+  panel open or first command execution, not at startup (`activationEvents`
+  makes the policy explicit, VS Code-style).
+- **Editor-proven patterns**: VS Code-style commands and activation events,
+  Vim-style keybindings that always yield to core shortcuts, and Emacs-style
+  host hooks (`ctx.hooks.on`) for observing framework lifecycle events.
 - **Versioned contract**: manifests pin the `apiVersion` they target; the
   host refuses incompatible plugins with a visible reason instead of breaking
   them silently on upgrade.
