@@ -1114,6 +1114,7 @@
   "settings.permissions.workspaceCustomizations": "Dostosowania Workspace",
   "settings.permissions.workspaceCustomizationsDesc": "Wzorce na poziomie Workspace rozszerzające domyślne ustawienia aplikacji powyżej.",
   "settings.plugins.activationError": "Błąd aktywacji",
+  "settings.plugins.commands": "Polecenia",
   "settings.plugins.description": "Rozszerzenia dodające funkcje i panele boczne",
   "settings.plugins.externalManifestOnly": "Tylko manifest — kod zewnętrznych wtyczek nie jest ładowany w tej wersji",
   "settings.plugins.incompatible": "Niezgodny",

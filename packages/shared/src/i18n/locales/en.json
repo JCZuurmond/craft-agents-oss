@@ -1114,6 +1114,7 @@
   "settings.permissions.workspaceCustomizations": "Workspace Customizations",
   "settings.permissions.workspaceCustomizationsDesc": "Workspace-level patterns that extend the app defaults above.",
   "settings.plugins.activationError": "Activation error",
+  "settings.plugins.commands": "Commands",
   "settings.plugins.description": "Extensions that add features and side panels",
   "settings.plugins.externalManifestOnly": "Manifest only — external plugin code is not loaded in this version",
   "settings.plugins.incompatible": "Incompatible",

@@ -1114,6 +1114,7 @@
   "settings.permissions.workspaceCustomizations": "Workspace-Anpassungen",
   "settings.permissions.workspaceCustomizationsDesc": "Workspace-weite Muster, die die obigen App-Standards erweitern.",
   "settings.plugins.activationError": "Aktivierungsfehler",
+  "settings.plugins.commands": "Befehle",
   "settings.plugins.description": "Erweiterungen, die Funktionen und Seitenleisten hinzufügen",
   "settings.plugins.externalManifestOnly": "Nur Manifest — externer Plugin-Code wird in dieser Version nicht geladen",
   "settings.plugins.incompatible": "Inkompatibel",
