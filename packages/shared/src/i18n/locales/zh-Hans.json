@@ -1113,6 +1113,7 @@
   "settings.permissions.workspaceCustomizations": "Workspace 自定义",
   "settings.permissions.workspaceCustomizationsDesc": "Workspace 级别的模式，扩展上述应用默认值。",
   "settings.plugins.activationError": "激活错误",
+  "settings.plugins.commands": "命令",
   "settings.plugins.description": "添加功能和侧边面板的扩展",
   "settings.plugins.externalManifestOnly": "仅清单 — 此版本不会加载外部插件代码",
   "settings.plugins.incompatible": "不兼容",

@@ -1113,6 +1113,7 @@
   "settings.permissions.workspaceCustomizations": "Personalizaciones del Workspace",
   "settings.permissions.workspaceCustomizationsDesc": "Patrones a nivel de Workspace que amplían los valores predeterminados de la aplicación.",
   "settings.plugins.activationError": "Error de activación",
+  "settings.plugins.commands": "Comandos",
   "settings.plugins.description": "Extensiones que añaden funciones y paneles laterales",
   "settings.plugins.externalManifestOnly": "Solo manifiesto — el código de plugins externos no se carga en esta versión",
   "settings.plugins.incompatible": "Incompatible",

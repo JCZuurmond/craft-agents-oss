@@ -114,10 +114,12 @@ loading external *code* is future work (see "Future work").
   "description": "…",             // optional
   "icon": "👋",                   // optional, emoji or URL (same rules as skills)
   "apiVersion": 1,                // plugin API version targeted (optional, default 1)
-  "permissions": ["ui.sidePanel"],
+  "permissions": ["ui.sidePanel", "commands"],
   "contributes": {                // static contributions (introspectable without code)
-    "sidePanels": [{ "id": "main", "title": "Hello", "icon": "👋", "location": "right" }]
+    "sidePanels": [{ "id": "main", "title": "Hello", "icon": "👋", "location": "right" }],
+    "commands": [{ "id": "open", "title": "Open Hello", "keybinding": "mod+shift+9" }]
   },
+  "activationEvents": ["onPanel:main", "onCommand:open"], // optional; default inferred
   "entries": { "renderer": "renderer.tsx" }, // entry points (informational for bundled plugins)
   "defaultEnabled": true          // optional, default false for external plugins
 }
@@ -127,14 +129,33 @@ Validated with zod (`validatePluginManifest`), mirroring automations.
 
 **Declarative contributions (`contributes`).** Static metadata about what a
 plugin offers is separated from what it does (`activate()`), following the
-VS Code/Eclipse model. Declared side panels power three things without running
-any plugin code: Settings can list them, the pane hosts render their toggle
-buttons from manifest data alone, and activation becomes **lazy** — a plugin
-with declared panels only activates when one of its panels is first opened
-(plugins without declarative contributions still activate eagerly at startup,
-since their contributions exist only in code). The declaration is the source
-of truth for title/icon/location; `ctx.ui.registerSidePanel()` with the same
-panel id supplies the component at activation time.
+VS Code/Eclipse model. Declared side panels and commands power three things
+without running any plugin code: Settings can list them, the pane hosts render
+panel toggle buttons and the command store binds keybindings from manifest
+data alone, and activation becomes **lazy** (plugins without declarative
+contributions still activate eagerly at startup, since their contributions
+exist only in code). The declaration is the source of truth for
+title/icon/location/keybinding; `ctx.ui.registerSidePanel()` /
+`ctx.commands.register()` with the same id supplies the component/handler at
+activation time.
+
+**Activation events (`activationEvents`).** The VS Code lazy-activation
+vocabulary (and the spirit of Vim autoload — code loads when first used):
+`onStartup`, `onPanel:{panelId}`, `onCommand:{commandId}`. Absent = inferred
+from declared contributions (declarative → lazy, code-only → eager), which is
+exactly the pre-activationEvents behavior; declaring events makes the policy
+explicit, e.g. a panel plugin that also needs a startup listener declares
+`["onStartup"]`. Events referencing undeclared ids fail validation.
+
+**Commands (`contributes.commands`).** The universal editor extensibility
+primitive — VS Code commands, Emacs interactive commands (`M-x`), Vim ex
+commands. Every user-invocable plugin behavior (keybindings today; a future
+palette or plugin menu items) dispatches through one host command registry
+keyed by qualified id (`{pluginId}.{commandId}`, the VS Code dotted-id
+convention). Keybindings ride on the declaration; the app's existing action
+registry keeps absolute precedence (its capture-phase listener claims core
+chords first, and chords equal to a core default are refused at declare
+time), and plugin bindings never fire in text inputs or open menus.
 
 **API versioning (`apiVersion`).** The host advertises `PLUGIN_API_VERSION`
 (from `@craft-agent/shared/plugins`); a manifest pins the version it targets
@@ -152,21 +173,23 @@ Settings → Plugins:
 |---|---|
 | `ui.sidePanel` | register panels in the plugin pane hosts (left or right shell edge) |
 | `ui.webview` | embed remote web content in a hardened `<webview>` (dedicated `persist:craft-plugin-<id>` partition); a sub-capability of a side panel, listed as a permission because it changes the window-level security posture |
+| `commands` | register handlers for declared commands (with their keybindings) and execute commands through the host registry |
 | `storage` | persistent key-value storage scoped to the plugin |
 | `ipc` | invoke main-process handlers registered for this plugin (namespaced `plugin:<id>:<channel>`) |
 
 No sanctioned `PluginContext` surface exposes credentials, app config,
 sessions, or Node APIs. Undeclared capability access throws. See
 [SECURITY.md](./SECURITY.md) for what is enforcement versus ergonomics — the
-honest version matters.
+honest version matters. `ctx.hooks` needs no permission: hooks only broadcast
+plugin-framework lifecycle events (never user or session data), see
+"Extension-point inventory".
 
 **Reserved vocabulary (do not reinvent when the need arrives):**
-`contributes.commands`, `contributes.settingsPages`, `contributes.statusItems`
-for future contribution kinds; an `events.read` permission for a read-only
-client mirror of the automations `WorkspaceEventBus` (reuse that bus — never
-fork it); a manifest `dependencies` field for inter-plugin ordering. These are
-deliberately documented-but-unbuilt so v1 stays small while the names stay
-stable.
+`contributes.settingsPages`, `contributes.statusItems` for future contribution
+kinds; an `events.read` permission for a read-only client mirror of the
+automations `WorkspaceEventBus` (reuse that bus — never fork it); a manifest
+`dependencies` field for inter-plugin ordering. These are deliberately
+documented-but-unbuilt so v1 stays small while the names stay stable.
 
 ### Lifecycle
 
@@ -184,11 +207,12 @@ stable.
 - Activation: `activate(ctx)` returns an optional disposable; every
   registration made through `ctx` is tracked and auto-disposed on deactivate.
   A throwing plugin is marked `status: 'error'` and never takes the host down.
-  Renderer-side: plugins with declared panels activate **lazily** on first
-  panel open; plugins without declarative contributions activate eagerly at
-  startup. The renderer runtime is bootstrapped at app level (an AppShell
-  effect), not by any pane host — plugins activate even in layouts that mount
-  no pane host (e.g. compact mode).
+  Renderer-side: activation follows the manifest's activation events
+  (explicit or inferred) — lazy on first panel open (`onPanel:`) or first
+  command execution (`onCommand:`), eager at startup (`onStartup` or no
+  declarative contributions). The renderer runtime is bootstrapped at app
+  level (an AppShell effect), not by any pane host — plugins activate even in
+  layouts that mount no pane host (e.g. compact mode).
 - Failure visibility: renderer activation failures and panel render crashes
   are reported per window to the main host (`__plugins:reportRendererStatus`)
   and merged into the Settings status; contributed components render inside an
@@ -202,6 +226,8 @@ interface PluginContext {
   logger: PluginLogger                    // prefixed console logging
   storage: PluginStorage                  // scoped KV (requires 'storage')
   ui: { registerSidePanel(c): Disposable; openSidePanel(id); closeSidePanel(id) } // 'ui.sidePanel'
+  commands: { register(id, handler): Disposable; execute(qualifiedId, args?): Promise<unknown> } // 'commands'
+  hooks: { on(hook, listener): Disposable } // framework lifecycle hooks (no permission)
   invoke(channel, args): Promise<unknown> // 'ipc' → plugin:<id>:<channel> in main
   webviewPartition: string                // 'ui.webview' → persist:craft-plugin-<id>
 }
@@ -220,21 +246,40 @@ interface PluginContext {
    focus, width, resize sash, and toggle rail; state persists per window
    (sessionStorage) with a `localStorage` seed under central `KEYS`, so
    multiple windows never fight over pane state.
-2. **Hardened web embed** (`ui.webview`) — per-plugin session partition +
+2. **Commands & keybindings** (`commands`) — declared in
+   `contributes.commands` (introspectable, lazily activated via
+   `onCommand:`) with handlers registered via `ctx.commands.register(id, fn)`
+   and dispatched through one shared `PluginCommandRegistry` keyed by
+   `{pluginId}.{commandId}`. Declared keybindings bind from manifest data
+   alone, reuse the core action registry's hotkey matcher and context keys,
+   and always yield to core shortcuts. Cross-plugin dispatch via
+   `ctx.commands.execute(qualifiedId)`. This is the VS Code/Emacs/Vim command
+   pattern; a future palette or menu contribution renders from the same
+   registry.
+3. **Host hooks** (no permission) — `ctx.hooks.on(name, fn)`, the Emacs
+   `add-hook` pattern (and the shape of Vim autocommands). Fixed vocabulary of
+   framework lifecycle events: `app:ready`, `plugin:activated`,
+   `plugin:deactivated`, `panel:opened`, `panel:closed`, `command:executed`.
+   Listeners observe (never veto), are error-isolated per Emacs `run-hooks`
+   semantics, and are auto-disposed on deactivate. Agent/session events are
+   deliberately excluded — those remain reserved for the `events.read`
+   WorkspaceEventBus mirror.
+4. **Hardened web embed** (`ui.webview`) — per-plugin session partition +
    `will-attach-webview` enforcement plus continuous navigation policing in
    main. This is a *framework* capability usable by any panel that embeds web
    content.
-3. **Main-process capabilities** (`ipc`) — main-side plugin modules register
+5. **Main-process capabilities** (`ipc`) — main-side plugin modules register
    handlers via `PluginMainContext.handle(channel, fn)`; renderer reaches them
    through `ctx.invoke`. Channels are namespaced and permission-gated
    (`__plugins:invoke` rejects undeclared/disabled plugins and untrusted
    senders).
-4. **Scoped storage** (`storage`) — namespaced persistent KV per plugin.
-5. **Registry & settings surface** — Settings → Plugins lists every discovered
-   plugin (built-in and external) with permissions, declared contributions,
-   and an enable/disable switch; changes broadcast to all windows
-   (`__plugins:changed`). External plugins are labelled manifest-only;
-   incompatible plugins show their reason with the toggle disabled.
+6. **Scoped storage** (`storage`) — namespaced persistent KV per plugin.
+7. **Registry & settings surface** — Settings → Plugins lists every discovered
+   plugin (built-in and external) with permissions, declared contributions
+   (panels, commands + keybindings), and an enable/disable switch; changes
+   broadcast to all windows (`__plugins:changed`). External plugins are
+   labelled manifest-only; incompatible plugins show their reason with the
+   toggle disabled.
 
 ## How core stays decoupled
 
