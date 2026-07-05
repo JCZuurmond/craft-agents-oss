@@ -22,8 +22,12 @@ discovery — invalid manifests are skipped, never crash the host.
   "contributes": {                 // static contributions — see below
     "sidePanels": [
       { "id": "main", "title": "My Panel", "icon": "🧩", "location": "right" }
+    ],
+    "commands": [
+      { "id": "open", "title": "Open My Panel", "keybinding": "mod+shift+9" }
     ]
   },
+  "activationEvents": ["onPanel:main", "onCommand:open"],  // when activate() runs (default inferred)
   "entries": { "renderer": "renderer.tsx", "main": "main.ts" },
   "defaultEnabled": true           // built-ins only; external plugins always start disabled
 }
@@ -36,7 +40,16 @@ Rules enforced by the loader:
   can never shadow a built-in.
 - Unknown or duplicate permissions fail validation; duplicate panel ids within
   `contributes.sidePanels` fail validation; declaring `sidePanels` requires
-  the `ui.sidePanel` permission.
+  the `ui.sidePanel` permission; declaring `commands` requires the `commands`
+  permission.
+- Keybindings must be modifier(s)+key in the app's hotkey format (e.g.
+  `mod+shift+b`; `mod` = Cmd on macOS, Ctrl elsewhere) and must include `mod`
+  or `alt` — bare keys and shift-only chords are reserved for typing. A chord
+  that collides with a core app shortcut is refused at runtime (with a console
+  warning); core shortcuts always win.
+- `activationEvents` entries must be `onStartup`, `onPanel:{panelId}`, or
+  `onCommand:{commandId}`, and the referenced panel/command ids must exist in
+  `contributes`.
 - A manifest targeting an `apiVersion` the host cannot satisfy is listed in
   Settings with the incompatibility reason and never activated or enabled.
   The host's current version is `PLUGIN_API_VERSION` in
@@ -45,14 +58,28 @@ Rules enforced by the loader:
 ## Declarative contributions vs. `activate()`
 
 `contributes` describes **what** your plugin offers; `activate()` wires **how**
-it behaves. Declare your side panels in the manifest whenever you can:
+it behaves. Declare your side panels and commands in the manifest whenever you
+can:
 
 - Settings lists them without running your code.
-- Their toggle-rail buttons render from manifest data alone.
+- Panel toggle-rail buttons and command keybindings work from manifest data
+  alone.
 - Your plugin activates **lazily** — `activate(ctx)` runs the first time one
-  of your panels is opened, not at app startup. (Plugins with no declared
-  panels activate eagerly at startup instead, since nothing about them is
-  known until code runs.)
+  of your panels is opened or one of your commands executes, not at app
+  startup. (Plugins with no declarative contributions activate eagerly at
+  startup instead, since nothing about them is known until code runs.)
+
+`activationEvents` makes this policy explicit when you need to override the
+inferred default — most plugins never declare it:
+
+| Event | `activate()` runs when… |
+|---|---|
+| `onStartup` | the renderer plugin runtime initializes |
+| `onPanel:{panelId}` | the declared panel is first opened |
+| `onCommand:{commandId}` | the declared command first executes (keybinding or `executeCommand`) |
+
+The common override is a plugin with declared panels that also needs a
+background listener from startup: declare `["onStartup"]`.
 
 At activation time, register the component for each declared panel with the
 same panel id. The declaration is the source of truth for title/icon/location;
@@ -78,8 +105,12 @@ exactly what's declared — using an undeclared surface throws.
 |---|---|
 | `ui.sidePanel` | `ctx.ui.*` — register/open/close side panels (left or right edge) |
 | `ui.webview` | `ctx.webviewPartition` — embed web content in a hardened `<webview>` inside one of your panels |
+| `commands` | `ctx.commands.*` — register handlers for your declared commands (with their keybindings) and execute commands |
 | `storage` | `ctx.storage` — persistent KV scoped to the plugin |
 | `ipc` | `ctx.invoke` — call the plugin's own main-process handlers |
+
+`ctx.hooks` (framework lifecycle observation) needs no permission — hooks only
+broadcast plugin-framework events, never user or session data.
 
 See [SECURITY.md](./SECURITY.md) for what each permission does and does not
 allow — including the honest boundary between enforcement and ergonomics.
@@ -91,9 +122,11 @@ discover → register → (enabled?) → activate(ctx) → … → deactivate/di
 ```
 
 - Discovery happens at app startup (built-in list + `~/.craft-agent/plugins/`).
-- Renderer activation is lazy for plugins with declared panels (first open),
-  eager otherwise; main-process activation is always eager (webview policy and
-  IPC handlers must exist before first use).
+- Renderer activation follows the activation events (explicit or inferred):
+  lazy on first panel open / first command execution for plugins with
+  declarative contributions, eager at startup otherwise; main-process
+  activation is always eager (webview policy and IPC handlers must exist
+  before first use).
 - Enable/disable is live: the renderer runtime reacts to Settings toggles in
   every window without a restart. Toggling a plugin on activates it
   immediately (no laziness — the user asked for it now). The one exception:
@@ -138,6 +171,16 @@ export function activate(ctx: PluginContext): void {
   ctx.ui.openSidePanel('main')        // open + focus
   ctx.ui.closeSidePanel('main')       // close if active
 
+  // Commands (requires 'commands') — register handlers for your declared
+  // command ids; the declaration supplies title/keybinding
+  ctx.commands.register('open', () => ctx.ui.openSidePanel('main'))
+  await ctx.commands.execute('my-plugin.open')   // cross-plugin dispatch by qualified id
+
+  // Hooks — observe framework lifecycle events (no permission; Emacs add-hook style)
+  ctx.hooks.on('panel:opened', ({ pluginId, panelId, location }) => { /* … */ })
+  // Vocabulary: app:ready, plugin:activated, plugin:deactivated,
+  //             panel:opened, panel:closed, command:executed
+
   // Main-process calls (requires 'ipc')
   const result = await ctx.invoke('my-channel', { some: 'args' })
 
@@ -154,6 +197,37 @@ right). Clicking an icon opens the pane (resizable, per-window persisted
 width); clicking the active icon closes it. The pane host renders your
 component only while the pane is open — design panels to restore their state
 from `ctx.storage`.
+
+### Commands and keybindings
+
+Commands are the universal editor extensibility primitive (VS Code commands,
+Emacs `M-x`, Vim ex commands). Declare them in `contributes.commands`, then
+register a handler for each declared id at activation time — the declaration
+is the source of truth for title and keybinding, the registration supplies the
+behavior. A declared command whose plugin has not activated yet activates it
+first, then dispatches (`onCommand:` lazy activation), so keybindings work
+from app startup without loading your code.
+
+Keybinding rules, in precedence order:
+
+1. Core app shortcuts always win — the core action registry handles keys in
+   the capture phase; plugin bindings only see what core did not claim, and a
+   chord equal to a core default is refused at declare time.
+2. Plugin keybindings never fire while a text input is focused or a
+   modal/menu is open.
+
+`ctx.commands.register` also accepts undeclared, code-only command ids (useful
+for internal dispatch targets), but those get no keybinding, no Settings
+listing, and no lazy activation.
+
+### Hooks
+
+`ctx.hooks.on(hook, listener)` is the Emacs `add-hook` pattern: the host runs
+your listener when the named framework event happens. Listeners observe — they
+cannot veto or reorder host behavior — and a throwing listener is isolated
+(logged, never breaks other plugins or the host). Subscriptions are disposed
+automatically on deactivate. Agent/session events are deliberately not hooks;
+they stay reserved behind the future `events.read` permission (see DESIGN.md).
 
 ## Main-process API (`PluginMainContext`)
 

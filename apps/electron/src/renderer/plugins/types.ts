@@ -8,6 +8,8 @@
 
 import type { ComponentType } from 'react'
 import type { PluginDisposable, PluginManifest, PluginPanelLocation } from '@craft-agent/shared/plugins/types'
+import type { PluginCommandHandler } from '@craft-agent/shared/plugins/commands'
+import type { PluginHostHook, PluginHostHookMap } from './host-hooks'
 
 /** Props passed to a contributed side-panel component */
 export interface PluginPanelProps {
@@ -60,6 +62,34 @@ export interface PluginUi {
   closeSidePanel(panelId: string): void
 }
 
+/**
+ * Command contributions (requires 'commands') — the universal editor
+ * primitive (VS Code commands / Emacs M-x / Vim ex commands). Commands
+ * declared in `contributes.commands` get introspection, optional
+ * keybindings, and lazy activation; `register()` supplies their handlers at
+ * activation time (registering undeclared, code-only command ids also works,
+ * but they get no keybinding and no lazy activation).
+ */
+export interface PluginCommands {
+  /** Register a handler for one of this plugin's command ids. Auto-disposed. */
+  register(commandId: string, handler: PluginCommandHandler): PluginDisposable
+  /**
+   * Execute any registered plugin command by qualified id
+   * (`{pluginId}.{commandId}`), the cross-plugin dispatch path.
+   */
+  execute(qualifiedId: string, args?: unknown): Promise<unknown>
+}
+
+/**
+ * Named host hooks (the Emacs `add-hook` pattern). Listeners observe
+ * plugin-framework lifecycle events; they cannot veto host behavior, and a
+ * throwing listener never affects other plugins or the host. Subscriptions
+ * are auto-disposed on deactivate.
+ */
+export interface PluginHooks {
+  on<K extends PluginHostHook>(hook: K, listener: (payload: PluginHostHookMap[K]) => void): PluginDisposable
+}
+
 /** Context handed to a plugin's renderer `activate()` */
 export interface PluginContext {
   manifest: PluginManifest
@@ -68,6 +98,10 @@ export interface PluginContext {
   storage: PluginStorage
   /** UI contributions (requires 'ui.sidePanel') */
   ui: PluginUi
+  /** Command registration and dispatch (requires 'commands') */
+  commands: PluginCommands
+  /** Named host hooks — framework lifecycle observation (no permission) */
+  hooks: PluginHooks
   /** Invoke a main-process handler registered by this plugin (requires 'ipc') */
   invoke(channel: string, args?: unknown): Promise<unknown>
   /**

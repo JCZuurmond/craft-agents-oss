@@ -22,6 +22,8 @@
  *                   This is a sub-capability of a side panel, not a standalone
  *                   contribution: the <webview> renders inside a panel the
  *                   plugin contributes via `ui.sidePanel`.
+ * - `commands`    — contribute user-invocable commands (and their keybindings)
+ *                   and execute commands through the host command registry
  * - `storage`     — persistent key-value storage scoped to the plugin
  * - `ipc`         — invoke main-process handlers registered for this plugin
  *                   (channels namespaced `plugin:{id}:{channel}`)
@@ -33,6 +35,7 @@
 export const PLUGIN_PERMISSIONS = [
   'ui.sidePanel',
   'ui.webview',
+  'commands',
   'storage',
   'ipc',
 ] as const;
@@ -112,16 +115,108 @@ export interface PluginSidePanelDeclaration {
 }
 
 /**
+ * A command declared statically in the manifest — the universal extensibility
+ * primitive shared by VS Code (`contributes.commands`), Emacs (interactive
+ * commands), and Vim (ex commands). Declared commands are introspectable
+ * without running plugin code and enable lazy activation: a keybinding (or an
+ * `executeCommand` call) for a declared command activates the plugin first,
+ * then dispatches. The plugin's renderer entry supplies the handler at
+ * activation time via `ctx.commands.register()` with the same command id.
+ */
+export interface PluginCommandDeclaration {
+  /** Command id, unique within the plugin (slug-style) */
+  id: string;
+  /** Human-readable title, e.g. shown next to the keybinding in Settings */
+  title: string;
+  /**
+   * Optional keybinding in the app's hotkey format, e.g. 'mod+shift+b'
+   * ('mod' = Cmd on macOS, Ctrl elsewhere; modifiers: mod/shift/alt).
+   * Must include 'mod' or 'alt' — bare keys and shift-only chords are
+   * reserved for typing. Core app shortcuts always take precedence.
+   */
+  keybinding?: string;
+}
+
+/**
  * Static contribution metadata — what a plugin offers, separated from what it
  * does (`activate()`), following the VS Code/Eclipse declarative model.
  *
  * Reserved vocabulary (documented, intentionally not implemented yet):
- * `commands`, `settingsPages`, `statusItems`, and a top-level manifest
- * `dependencies` field. See docs/plugins/DESIGN.md before adding any of them.
+ * `settingsPages`, `statusItems`, and a top-level manifest `dependencies`
+ * field. See docs/plugins/DESIGN.md before adding any of them.
  */
 export interface PluginContributions {
   /** Side panels rendered by the plugin pane hosts (requires 'ui.sidePanel') */
   sidePanels?: PluginSidePanelDeclaration[];
+  /** User-invocable commands with optional keybindings (requires 'commands') */
+  commands?: PluginCommandDeclaration[];
+}
+
+/**
+ * Fully-qualified command id used by the host command registry:
+ * `{pluginId}.{commandId}` (the VS Code dotted-id convention).
+ */
+export function qualifiedCommandId(pluginId: string, commandId: string): string {
+  return `${pluginId}.${commandId}`;
+}
+
+// ============================================================
+// Activation events (lazy activation vocabulary)
+// ============================================================
+
+/**
+ * When a plugin's `activate()` runs — the VS Code `activationEvents` idea
+ * (and the spirit of Vim's autoload: code loads when first used).
+ *
+ * - `onStartup`            — activate eagerly when the host initializes
+ * - `onPanel:{panelId}`    — activate when the declared panel is first opened
+ * - `onCommand:{commandId}` — activate when the declared command is first
+ *                             executed (keybinding or `executeCommand`)
+ *
+ * When `activationEvents` is absent the host infers a policy that preserves
+ * pre-activationEvents behavior: plugins with declared side panels are lazy
+ * (as if `onPanel:` were listed for each), plugins with declared commands are
+ * lazy on those commands, and plugins with no declarative contributions
+ * activate at startup (their contributions exist only in code).
+ */
+export type PluginActivationEvent =
+  | 'onStartup'
+  | `onPanel:${string}`
+  | `onCommand:${string}`;
+
+/** Parsed form of one activation event */
+export type ParsedActivationEvent =
+  | { kind: 'onStartup' }
+  | { kind: 'onPanel'; panelId: string }
+  | { kind: 'onCommand'; commandId: string };
+
+/** Parse one activation-event string; returns null when malformed */
+export function parseActivationEvent(event: string): ParsedActivationEvent | null {
+  if (event === 'onStartup') return { kind: 'onStartup' };
+  if (event.startsWith('onPanel:')) {
+    const panelId = event.slice('onPanel:'.length);
+    return panelId ? { kind: 'onPanel', panelId } : null;
+  }
+  if (event.startsWith('onCommand:')) {
+    const commandId = event.slice('onCommand:'.length);
+    return commandId ? { kind: 'onCommand', commandId } : null;
+  }
+  return null;
+}
+
+/**
+ * Should the host activate this plugin at startup (vs lazily on first use)?
+ * Explicit `activationEvents` win; the implicit default keeps plugins with
+ * declarative contributions lazy and code-only plugins eager.
+ */
+export function shouldActivateOnStartup(manifest: PluginManifest): boolean {
+  const events = manifest.activationEvents;
+  if (events && events.length > 0) {
+    return events.some((e) => parseActivationEvent(e)?.kind === 'onStartup');
+  }
+  const panels = manifest.contributes?.sidePanels?.length ?? 0;
+  const commands = manifest.contributes?.commands?.length ?? 0;
+  return panels === 0 && commands === 0;
 }
 
 /** Entry points relative to the plugin directory (informational for built-in plugins) */
@@ -154,6 +249,11 @@ export interface PluginManifest {
   apiVersion?: number;
   /** Static contribution metadata (introspectable without running code) */
   contributes?: PluginContributions;
+  /**
+   * When the plugin activates (see PluginActivationEvent). Absent = inferred
+   * from declared contributions (declared panels/commands → lazy, else eager).
+   */
+  activationEvents?: PluginActivationEvent[];
   /** Entry points relative to the plugin directory */
   entries?: PluginEntries;
   /**

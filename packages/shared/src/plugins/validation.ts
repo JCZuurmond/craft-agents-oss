@@ -31,6 +31,35 @@ export const PluginSidePanelDeclarationSchema = z.object({
   location: z.enum(PLUGIN_PANEL_LOCATIONS).optional(),
 });
 
+/**
+ * Keybinding format shared with the app's action registry: optional
+ * mod/shift/alt modifiers plus one final key (letter, digit, or a supported
+ * special key). Plugin keybindings must include 'mod' or 'alt' so bare keys
+ * and shift-only chords stay reserved for typing.
+ */
+const KEYBINDING_KEY = '(?:[a-z0-9]|escape|tab|left|right|up|down|\\[|\\]|,|\\.)';
+const KEYBINDING_PATTERN = new RegExp(`^(?:(?:mod|shift|alt)\\+)+${KEYBINDING_KEY}$`);
+
+export const PluginCommandDeclarationSchema = z.object({
+  id: z
+    .string()
+    .min(1, 'command id cannot be empty')
+    .max(64, 'command id must be 64 characters or fewer')
+    .regex(PLUGIN_ID_PATTERN, 'command id must be slug-style: lowercase letters, digits, and hyphens'),
+  title: z.string().min(1, 'command title cannot be empty').max(128),
+  keybinding: z
+    .string()
+    .regex(
+      KEYBINDING_PATTERN,
+      "keybinding must be modifier(s) + key, e.g. 'mod+shift+b' (modifiers: mod, shift, alt)",
+    )
+    .refine(
+      (kb) => kb.includes('mod+') || kb.includes('alt+'),
+      "keybinding must include 'mod' or 'alt' (bare and shift-only chords are reserved for typing)",
+    )
+    .optional(),
+});
+
 export const PluginContributionsSchema = z.object({
   sidePanels: z
     .array(PluginSidePanelDeclarationSchema)
@@ -39,7 +68,17 @@ export const PluginContributionsSchema = z.object({
       'sidePanels must not contain duplicate panel ids',
     )
     .optional(),
+  commands: z
+    .array(PluginCommandDeclarationSchema)
+    .refine(
+      (commands) => new Set(commands.map((c) => c.id)).size === commands.length,
+      'commands must not contain duplicate command ids',
+    )
+    .optional(),
 });
+
+/** `onStartup`, `onPanel:{panelId}`, `onCommand:{commandId}` */
+const ACTIVATION_EVENT_PATTERN = /^(?:onStartup|onPanel:.+|onCommand:.+)$/;
 
 export const PluginManifestSchema = z.object({
   id: z
@@ -62,6 +101,17 @@ export const PluginManifestSchema = z.object({
     .min(1, 'apiVersion must be 1 or greater')
     .optional(),
   contributes: PluginContributionsSchema.optional(),
+  activationEvents: z
+    .array(
+      z
+        .string()
+        .regex(
+          ACTIVATION_EVENT_PATTERN,
+          "activation events must be 'onStartup', 'onPanel:{panelId}', or 'onCommand:{commandId}'",
+        ),
+    )
+    .refine((events) => new Set(events).size === events.length, 'activationEvents must not contain duplicates')
+    .optional(),
   entries: PluginEntriesSchema.optional(),
   defaultEnabled: z.boolean().optional(),
 }).superRefine((manifest, ctx) => {
@@ -71,6 +121,33 @@ export const PluginManifestSchema = z.object({
       path: ['contributes', 'sidePanels'],
       message: "declaring sidePanels requires the 'ui.sidePanel' permission",
     });
+  }
+  if ((manifest.contributes?.commands?.length ?? 0) > 0 && !manifest.permissions.includes('commands')) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['contributes', 'commands'],
+      message: "declaring commands requires the 'commands' permission",
+    });
+  }
+  // Lazy-activation targets must exist in the declared contributions —
+  // an activation event referencing an undeclared id would never fire.
+  const panelIds = new Set((manifest.contributes?.sidePanels ?? []).map((p) => p.id));
+  const commandIds = new Set((manifest.contributes?.commands ?? []).map((c) => c.id));
+  for (const event of manifest.activationEvents ?? []) {
+    if (event.startsWith('onPanel:') && !panelIds.has(event.slice('onPanel:'.length))) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['activationEvents'],
+        message: `'${event}' references a panel id not declared in contributes.sidePanels`,
+      });
+    }
+    if (event.startsWith('onCommand:') && !commandIds.has(event.slice('onCommand:'.length))) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['activationEvents'],
+        message: `'${event}' references a command id not declared in contributes.commands`,
+      });
+    }
   }
 });
 
