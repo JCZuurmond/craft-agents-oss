@@ -130,7 +130,7 @@ Validated with zod (`validatePluginManifest`), mirroring automations.
 **Declarative contributions (`contributes`).** Static metadata about what a
 plugin offers is separated from what it does (`activate()`), following the
 VS Code/Eclipse model. Declared side panels and commands power three things
-without running any plugin code: Settings can list them, the pane hosts render
+without running any plugin code: Settings can list them, the panel docks render
 panel toggle buttons and the command store binds keybindings from manifest
 data alone, and activation becomes **lazy** (plugins without declarative
 contributions still activate eagerly at startup, since their contributions
@@ -171,7 +171,7 @@ Settings → Plugins:
 
 | Permission | Grants |
 |---|---|
-| `ui.sidePanel` | register panels in the plugin pane hosts (left or right shell edge) |
+| `ui.sidePanel` | register panels in the plugin docks (any shell edge: left, right, top, or bottom) |
 | `ui.webview` | embed remote web content in a hardened `<webview>` (dedicated `persist:craft-plugin-<id>` partition); a sub-capability of a side panel, listed as a permission because it changes the window-level security posture |
 | `commands` | register handlers for declared commands (with their keybindings) and execute commands through the host registry |
 | `storage` | persistent key-value storage scoped to the plugin |
@@ -214,8 +214,8 @@ documented-but-unbuilt so v1 stays small while the names stay stable.
   (explicit or inferred) — lazy on first panel open (`onPanel:`) or first
   command execution (`onCommand:`), eager at startup (`onStartup` or no
   declarative contributions). The renderer runtime is bootstrapped at app
-  level (an AppShell effect), not by any pane host — plugins activate even in
-  layouts that mount no pane host (e.g. compact mode).
+  level (an AppShell effect), not by any dock — plugins activate even in
+  layouts that mount no dock (e.g. compact mode).
 - Failure visibility: renderer activation failures and panel render crashes
   are reported per window to the main host (`__plugins:reportRendererStatus`)
   and merged into the Settings status; contributed components render inside an
@@ -242,13 +242,18 @@ interface PluginContext {
    (introspectable, lazy) and/or registered imperatively via
    `ctx.ui.registerSidePanel({ id, title, icon, location, component })`.
    The panel store is a contribution-slot registry keyed by `location`
-   (`'left' | 'right'`, default `'right'`); AppShell mounts one
-   `PluginPaneHost` per edge at its pre-existing layout anchors. A new UI
-   location is a new member of `PLUGIN_PANEL_LOCATIONS` plus one host mount —
-   a data change, not a new architecture. Each edge owns its visibility,
-   focus, width, resize sash, and toggle rail; state persists per window
-   (sessionStorage) with a `localStorage` seed under central `KEYS`, so
-   multiple windows never fight over pane state.
+   (`'left' | 'right' | 'top' | 'bottom'`, default `'right'` — the Emacs
+   side-window vocabulary); AppShell mounts one `PluginPanelDock` per
+   vertical edge at its pre-existing layout anchors and wraps the content
+   area in `PluginPanelArea`, which provides the top/bottom docks (VS Code's
+   bottom-panel geometry: horizontal docks span the content area between the
+   vertical docks). One dock component serves all four edges — only the size
+   axis (width vs height), sash placement, and rail direction differ. A new
+   UI location is a new member of `PLUGIN_PANEL_LOCATIONS` plus one dock
+   mount — a data change, not a new architecture. Each dock owns its
+   visibility, focus, size, resize sash, and toggle rail; state persists per
+   window (sessionStorage) with a `localStorage` seed under central `KEYS`,
+   so multiple windows never fight over dock state.
 2. **Commands & keybindings** (`commands`) — declared in
    `contributes.commands` (introspectable, lazily activated via
    `onCommand:`) with handlers registered via `ctx.commands.register(id, fn)`
@@ -288,10 +293,11 @@ interface PluginContext {
 
 Core changes are additive and generic (core knows no specific plugin):
 
-- `AppShell.tsx`: one runtime-bootstrap effect, one `PluginPaneHost` mount per
-  edge at the pre-existing layout anchors, and `isRightSidebarVisible` fed
-  from the exported `usePluginPaneVisible('right')` selector (no plugin logic
-  inline in AppShell).
+- `AppShell.tsx`: one runtime-bootstrap effect, one `PluginPanelDock` mount
+  per vertical edge plus one `PluginPanelArea` wrapper around the content
+  area at the pre-existing layout anchors, and the stack's edge/radius
+  props fed from the exported `usePluginPanelDockVisible(...)` selector (no
+  plugin logic inline in AppShell).
 - `window-manager.ts`: `webviewTag` computed from "any enabled plugin declares
   `ui.webview`" instead of hardcoded `false`.
 - `main/index.ts`: one `initializePluginHost()` + one `disposePluginHost()` call.

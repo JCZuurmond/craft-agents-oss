@@ -33,8 +33,8 @@ import { BUILTIN_PLUGIN_MANIFESTS } from '../../plugins/manifests'
 import { RENDERER_PLUGIN_ENTRIES } from '../../plugins/renderer-entries'
 import { createPluginContext } from './context'
 import {
-  getPluginPaneState,
-  subscribePluginPane,
+  getPluginPanelState,
+  subscribePluginPanels,
   declarePluginPanels,
   removePluginPanels,
   markPluginPanelError,
@@ -105,7 +105,7 @@ function activateRendererPlugin(plugin: LoadedPlugin): PluginDisposable[] {
 function syncRendererStatusToMain(): void {
   const reportStatus = window.electronAPI?.plugins?.reportRendererStatus
   if (!reportStatus || !registry) return
-  const panels = getPluginPaneState().panels
+  const panels = getPluginPanelState().panels
   for (const entry of registry.list()) {
     const id = entry.manifest.id
     const activationError = entry.status === 'error' ? (entry.error ?? 'Unknown renderer error') : null
@@ -197,7 +197,7 @@ export function initializePluginRuntime(): Promise<void> {
 
     // Panel-store changes (crash quarantines, retries, lazy registrations)
     // feed the same status report as registry changes.
-    subscribePluginPane(syncRendererStatusToMain)
+    subscribePluginPanels(syncRendererStatusToMain)
 
     window.addEventListener('beforeunload', () => registry?.disposeAll())
 
@@ -241,7 +241,7 @@ async function ensurePluginActive(pluginId: string): Promise<void> {
  */
 export async function ensurePluginPanelReady(key: string): Promise<void> {
   await initializePluginRuntime()
-  const panel = getPluginPaneState().panels.find((p) => p.key === key)
+  const panel = getPluginPanelState().panels.find((p) => p.key === key)
   if (!panel || panel.status !== 'declared' || !registry) return
 
   const entry = registry.get(panel.pluginId)
@@ -259,7 +259,7 @@ export async function ensurePluginPanelReady(key: string): Promise<void> {
     markPluginPanelsError(panel.pluginId, after.error ?? 'Plugin failed to activate')
     return
   }
-  const panelAfter = getPluginPaneState().panels.find((p) => p.key === key)
+  const panelAfter = getPluginPanelState().panels.find((p) => p.key === key)
   if (panelAfter && panelAfter.status === 'declared') {
     markPluginPanelError(key, `Plugin '${panel.pluginId}' did not register panel '${key}'`)
   }

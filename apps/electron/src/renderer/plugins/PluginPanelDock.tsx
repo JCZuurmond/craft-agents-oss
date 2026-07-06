@@ -1,10 +1,17 @@
 /**
- * PluginPaneHost
+ * PluginPanelDock
  *
  * Renders one shell edge's plugin-contributed panels:
- * - the open pane (header + active panel body) as a flex sibling of the
- *   panel stack, on the edge given by the `location` prop
+ * - the open dock (header + active panel body) as a flex sibling of its
+ *   neighbors, on the edge given by the `location` prop
  * - a thin toggle rail with one icon button per registered panel
+ *
+ * All four edges are supported — the Emacs side-window model. Vertical
+ * docks (left/right) live in the shell's horizontal flex row and resize by
+ * width; horizontal docks (top/bottom) live in the content column mounted
+ * by PluginPanelArea and resize by height (VS Code's bottom-panel
+ * geometry). One component covers both orientations: only the size axis,
+ * sash placement, and rail direction differ.
  *
  * Renders nothing when no plugin has registered a panel on this edge, so
  * core layouts are untouched unless a plugin is active. Contributed
@@ -14,7 +21,7 @@
  * activation when opened.
  *
  * The plugin runtime itself is bootstrapped at app level (AppShell), not
- * here: plugins activate even when no pane host is mounted.
+ * here: plugins activate even when no dock is mounted.
  */
 
 import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
@@ -22,18 +29,31 @@ import { useTranslation } from 'react-i18next'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@craft-agent/ui'
-import type { PluginPanelLocation } from '@craft-agent/shared/plugins/types'
-import { RADIUS_INNER, PANEL_SASH_HIT_WIDTH, PANEL_SASH_LINE_WIDTH } from '../components/app-shell/panel-constants'
+import { isHorizontalPanelEdge, type PluginPanelLocation } from '@craft-agent/shared/plugins/types'
+import {
+  RADIUS_INNER,
+  PANEL_GAP,
+  PANEL_SASH_HIT_WIDTH,
+  PANEL_SASH_LINE_WIDTH,
+} from '../components/app-shell/panel-constants'
 import { ensurePluginPanelReady, retryPluginPanel, reportPluginPanelCrash } from './runtime'
 import {
-  usePluginPaneState,
+  usePluginPanelState,
   togglePluginPanel,
-  closePluginPane,
-  setPluginPaneWidth,
-  PLUGIN_PANE_MIN_WIDTH,
-  PLUGIN_PANE_MAX_WIDTH,
+  closePluginPanelDock,
+  setPluginPanelDockSize,
   type RegisteredPluginPanel,
 } from './panel-store'
+
+const RAIL_THICKNESS = 30
+
+/** Tooltip side pointing inward, away from the dock's window edge */
+const TOOLTIP_SIDE: Record<PluginPanelLocation, 'left' | 'right' | 'top' | 'bottom'> = {
+  left: 'right',
+  right: 'left',
+  top: 'bottom',
+  bottom: 'top',
+}
 
 interface PanelErrorBoundaryProps {
   panelKey: string
@@ -43,7 +63,7 @@ interface PanelErrorBoundaryProps {
 
 /**
  * Quarantines a crashing contributed component: flips the panel to its
- * 'error' state (rendered by the host below) and attributes the crash to the
+ * 'error' state (rendered by the dock below) and attributes the crash to the
  * plugin in Settings. Without this, one plugin's render error unmounts the
  * entire shell.
  */
@@ -59,7 +79,7 @@ class PanelErrorBoundary extends Component<PanelErrorBoundaryProps, { hasError: 
   }
 
   render() {
-    // The store now marks the panel 'error', so the host renders the error
+    // The store now marks the panel 'error', so the dock renders the error
     // state instead of these children on the next pass.
     if (this.state.hasError) return null
     return this.props.children
@@ -79,7 +99,7 @@ function PanelBody({ panel }: { panel: RegisteredPluginPanel }) {
   if (panel.status === 'error') {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-3 px-6 text-center">
-        <div className="text-sm font-medium">{t('pluginPane.panelFailed')}</div>
+        <div className="text-sm font-medium">{t('pluginPanel.failed')}</div>
         {panel.error && (
           <div className="text-xs text-muted-foreground break-words max-w-full">{panel.error}</div>
         )}
@@ -108,14 +128,15 @@ function PanelBody({ panel }: { panel: RegisteredPluginPanel }) {
   )
 }
 
-export function PluginPaneHost({ location }: { location: PluginPanelLocation }) {
+export function PluginPanelDock({ location }: { location: PluginPanelLocation }) {
   const { t } = useTranslation()
-  const { panels: allPanels, edges } = usePluginPaneState()
+  const { panels: allPanels, docks } = usePluginPanelState()
   const [isResizing, setIsResizing] = useState(false)
-  const paneRef = useRef<HTMLDivElement>(null)
+  const dockRef = useRef<HTMLDivElement>(null)
 
+  const horizontal = isHorizontalPanelEdge(location)
   const panels = allPanels.filter((p) => p.location === location)
-  const edge = edges[location]
+  const dock = docks[location]
 
   const onSashMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -125,11 +146,17 @@ export function PluginPaneHost({ location }: { location: PluginPanelLocation }) 
   useEffect(() => {
     if (!isResizing) return
     const onMouseMove = (e: MouseEvent) => {
-      const pane = paneRef.current
-      if (!pane) return
-      const rect = pane.getBoundingClientRect()
-      const next = location === 'right' ? rect.right - e.clientX : e.clientX - rect.left
-      setPluginPaneWidth(location, Math.min(PLUGIN_PANE_MAX_WIDTH, Math.max(PLUGIN_PANE_MIN_WIDTH, next)))
+      const el = dockRef.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      // Size grows toward the shell's center: measured from the dock's own
+      // window edge to the pointer.
+      const next =
+        location === 'right' ? rect.right - e.clientX
+        : location === 'left' ? e.clientX - rect.left
+        : location === 'bottom' ? rect.bottom - e.clientY
+        : e.clientY - rect.top
+      setPluginPanelDockSize(location, next)
     }
     const onMouseUp = () => setIsResizing(false)
     window.addEventListener('mousemove', onMouseMove)
@@ -142,19 +169,22 @@ export function PluginPaneHost({ location }: { location: PluginPanelLocation }) 
 
   if (panels.length === 0) return null
 
-  const activePanel = panels.find((p) => p.key === edge.activePanelKey) ?? null
-  const showPane = edge.isOpen && activePanel !== null
+  const activePanel = panels.find((p) => p.key === dock.activePanelKey) ?? null
+  const showDock = dock.isOpen && activePanel !== null
 
-  const pane = showPane && (
+  const openDock = showDock && (
     <div
-      ref={paneRef}
-      data-panel-role="plugin-pane"
+      ref={dockRef}
+      data-panel-role="plugin-dock"
       data-panel-location={location}
-      className="h-full relative shrink-0 bg-background shadow-middle overflow-hidden flex flex-col"
+      className={cn(
+        'relative shrink-0 bg-background shadow-middle overflow-hidden flex flex-col',
+        horizontal ? 'w-full' : 'h-full',
+      )}
       style={{
-        width: edge.width,
+        [horizontal ? 'height' : 'width']: dock.size,
         borderRadius: RADIUS_INNER,
-        transition: isResizing ? undefined : 'width 0.15s ease-out',
+        transition: isResizing ? undefined : `${horizontal ? 'height' : 'width'} 0.15s ease-out`,
       }}
     >
       {/* Header */}
@@ -164,7 +194,7 @@ export function PluginPaneHost({ location }: { location: PluginPanelLocation }) 
         )}
         <span className="flex-1 text-sm font-medium truncate">{activePanel.title}</span>
         <button
-          onClick={() => closePluginPane(location)}
+          onClick={() => closePluginPanelDock(location)}
           className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-foreground/5"
           aria-label={t('common.close')}
         >
@@ -177,18 +207,26 @@ export function PluginPaneHost({ location }: { location: PluginPanelLocation }) 
         <PanelBody panel={activePanel} />
       </div>
 
-      {/* Resize sash (on the inner edge, toward the panel stack) */}
+      {/* Resize sash on the inner edge, toward the shell's center */}
       <div
         onMouseDown={onSashMouseDown}
         className={cn(
-          'absolute inset-y-0 cursor-col-resize flex justify-center z-10',
-          location === 'right' ? 'left-0' : 'right-0',
+          'absolute flex z-10',
+          horizontal
+            ? cn('inset-x-0 cursor-row-resize flex-col justify-center items-stretch',
+                location === 'top' ? 'bottom-0' : 'top-0')
+            : cn('inset-y-0 cursor-col-resize justify-center',
+                location === 'right' ? 'left-0' : 'right-0'),
         )}
-        style={{ width: PANEL_SASH_HIT_WIDTH }}
+        style={{ [horizontal ? 'height' : 'width']: PANEL_SASH_HIT_WIDTH }}
       >
         <div
-          className={cn('h-full transition-colors', isResizing ? 'bg-foreground/20' : 'hover:bg-foreground/10')}
-          style={{ width: PANEL_SASH_LINE_WIDTH }}
+          className={cn(
+            horizontal ? 'w-full self-center' : 'h-full',
+            'transition-colors',
+            isResizing ? 'bg-foreground/20' : 'hover:bg-foreground/10',
+          )}
+          style={{ [horizontal ? 'height' : 'width']: PANEL_SASH_LINE_WIDTH }}
         />
       </div>
     </div>
@@ -198,11 +236,14 @@ export function PluginPaneHost({ location }: { location: PluginPanelLocation }) 
     <div
       data-panel-role="plugin-rail"
       data-panel-location={location}
-      className="h-full shrink-0 flex flex-col items-center gap-1 py-2"
-      style={{ width: 30 }}
+      className={cn(
+        'shrink-0 flex items-center gap-1',
+        horizontal ? 'w-full flex-row justify-start px-2' : 'h-full flex-col py-2',
+      )}
+      style={{ [horizontal ? 'height' : 'width']: RAIL_THICKNESS }}
     >
       {panels.map((panel) => {
-        const isActive = showPane && panel.key === edge.activePanelKey
+        const isActive = showDock && panel.key === dock.activePanelKey
         return (
           <Tooltip key={panel.key}>
             <TooltipTrigger asChild>
@@ -220,23 +261,45 @@ export function PluginPaneHost({ location }: { location: PluginPanelLocation }) 
                 <span aria-hidden="true">{panel.icon ?? '◧'}</span>
               </button>
             </TooltipTrigger>
-            <TooltipContent side={location === 'right' ? 'left' : 'right'}>{panel.title}</TooltipContent>
+            <TooltipContent side={TOOLTIP_SIDE[location]}>{panel.title}</TooltipContent>
           </Tooltip>
         )
       })}
     </div>
   )
 
-  // The rail hugs the window edge: outside the pane on both sides.
-  return location === 'right' ? (
+  // The rail hugs the window edge: before the dock on left/top, after it on
+  // right/bottom. Parent flex direction matches the orientation (row for
+  // vertical docks, column for horizontal ones).
+  return location === 'right' || location === 'bottom' ? (
     <>
-      {pane}
+      {openDock}
       {rail}
     </>
   ) : (
     <>
       {rail}
-      {pane}
+      {openDock}
     </>
+  )
+}
+
+/**
+ * PluginPanelArea
+ *
+ * Column wrapper that gives the top/bottom docks their mount points around
+ * the app's content area (between the vertical docks — VS Code's
+ * bottom-panel geometry). AppShell wraps PanelStackContainer with this
+ * instead of mounting horizontal docks itself, keeping the core diff to one
+ * element. With no top/bottom panels registered the docks render null and
+ * this is a plain pass-through flex column.
+ */
+export function PluginPanelArea({ hidden, children }: { hidden?: boolean; children: ReactNode }) {
+  return (
+    <div className="flex-1 min-w-0 min-h-0 flex flex-col" style={{ gap: PANEL_GAP }}>
+      {!hidden && <PluginPanelDock location="top" />}
+      {children}
+      {!hidden && <PluginPanelDock location="bottom" />}
+    </div>
   )
 }

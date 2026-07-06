@@ -1,6 +1,6 @@
 /**
  * Panel store semantics: declared/ready/error lifecycle, declaration↔code
- * merge rules, per-edge visibility state, and edge reconciliation when
+ * merge rules, per-dock visibility state, and dock reconciliation when
  * panels disappear. Runs under bun without a DOM — storage-stub provides
  * in-memory local/sessionStorage (the store also guards their absence).
  */
@@ -8,6 +8,7 @@
 import './storage-stub'
 import { describe, test, expect, beforeEach } from 'bun:test'
 import type { ComponentType } from 'react'
+import { PLUGIN_PANEL_LOCATIONS } from '@craft-agent/shared/plugins/types'
 import {
   declarePluginPanels,
   registerPluginPanel,
@@ -17,22 +18,25 @@ import {
   resetPluginPanel,
   openPluginPanel,
   togglePluginPanel,
-  getPluginPaneState,
-  isPluginPaneVisible,
+  setPluginPanelDockSize,
+  getPluginPanelState,
+  isPluginPanelDockVisible,
   panelKey,
-  __setEdgeStateForTests,
+  PLUGIN_PANEL_DOCK_SIZE,
+  __setDockStateForTests,
 } from '../panel-store'
 import type { PluginPanelProps } from '../types'
 
 const Component = (() => null) as ComponentType<PluginPanelProps>
 
-/** The store is a module singleton — reset panels and edges between tests */
+/** The store is a module singleton — reset panels and docks between tests */
 beforeEach(() => {
-  for (const panel of [...getPluginPaneState().panels]) {
+  for (const panel of [...getPluginPanelState().panels]) {
     removePluginPanels(panel.pluginId)
   }
-  __setEdgeStateForTests('left', { activePanelKey: null, isOpen: false, width: 420 })
-  __setEdgeStateForTests('right', { activePanelKey: null, isOpen: false, width: 420 })
+  for (const location of PLUGIN_PANEL_LOCATIONS) {
+    __setDockStateForTests(location, { activePanelKey: null, isOpen: false, size: 420 })
+  }
 })
 
 describe('declarative panels', () => {
@@ -42,7 +46,7 @@ describe('declarative panels', () => {
       { id: 'b', title: 'B', icon: '🅱️', location: 'left' },
     ], '🧩')
 
-    const { panels } = getPluginPaneState()
+    const { panels } = getPluginPanelState()
     expect(panels).toHaveLength(2)
     const a = panels.find((p) => p.key === panelKey('p1', 'a'))!
     const b = panels.find((p) => p.key === panelKey('p1', 'b'))!
@@ -55,7 +59,7 @@ describe('declarative panels', () => {
     declarePluginPanels('p1', [{ id: 'a', title: 'Declared Title', location: 'left' }])
     registerPluginPanel('p1', { id: 'a', title: 'Code Title', icon: '💥', component: Component })
 
-    const panel = getPluginPaneState().panels[0]!
+    const panel = getPluginPanelState().panels[0]!
     expect(panel.status).toBe('ready')
     expect(panel.component).toBe(Component)
     expect(panel.title).toBe('Declared Title')
@@ -69,7 +73,7 @@ describe('declarative panels', () => {
     const unregister = registerPluginPanel('p1', { id: 'a', title: 'A', component: Component })
     unregister()
 
-    const panel = getPluginPaneState().panels[0]!
+    const panel = getPluginPanelState().panels[0]!
     expect(panel.status).toBe('declared')
     expect(panel.component).toBeNull()
   })
@@ -81,9 +85,20 @@ describe('declarative panels', () => {
 
   test('undeclared registration contributes a complete panel and unregisters fully', () => {
     const unregister = registerPluginPanel('p1', { id: 'x', title: 'X', location: 'left', component: Component })
-    expect(getPluginPaneState().panels[0]).toMatchObject({ status: 'ready', location: 'left', declared: false })
+    expect(getPluginPanelState().panels[0]).toMatchObject({ status: 'ready', location: 'left', declared: false })
     unregister()
-    expect(getPluginPaneState().panels).toHaveLength(0)
+    expect(getPluginPanelState().panels).toHaveLength(0)
+  })
+
+  test('panels can be declared on every shell edge', () => {
+    declarePluginPanels('p1', [
+      { id: 'l', title: 'L', location: 'left' },
+      { id: 'r', title: 'R', location: 'right' },
+      { id: 't', title: 'T', location: 'top' },
+      { id: 'b', title: 'B', location: 'bottom' },
+    ])
+    const locations = getPluginPanelState().panels.map((p) => p.location)
+    expect(locations).toEqual(['left', 'right', 'top', 'bottom'])
   })
 })
 
@@ -93,7 +108,7 @@ describe('error lifecycle', () => {
     registerPluginPanel('p1', { id: 'a', title: 'A', component: Component })
     markPluginPanelsError('p1', 'activation failed')
 
-    const byId = (id: string) => getPluginPaneState().panels.find((p) => p.key === panelKey('p1', id))!
+    const byId = (id: string) => getPluginPanelState().panels.find((p) => p.key === panelKey('p1', id))!
     expect(byId('a').status).toBe('ready')
     expect(byId('b')).toMatchObject({ status: 'error', error: 'activation failed' })
 
@@ -107,56 +122,75 @@ describe('error lifecycle', () => {
   })
 })
 
-describe('per-edge visibility', () => {
-  test('edges track open/active independently', () => {
+describe('per-dock visibility', () => {
+  test('docks track open/active independently across all four edges', () => {
     registerPluginPanel('p1', { id: 'r', title: 'R', component: Component })
     registerPluginPanel('p2', { id: 'l', title: 'L', location: 'left', component: Component })
+    registerPluginPanel('p3', { id: 'b', title: 'B', location: 'bottom', component: Component })
 
     openPluginPanel(panelKey('p1', 'r'))
-    expect(isPluginPaneVisible('right')).toBe(true)
-    expect(isPluginPaneVisible('left')).toBe(false)
+    expect(isPluginPanelDockVisible('right')).toBe(true)
+    expect(isPluginPanelDockVisible('left')).toBe(false)
+    expect(isPluginPanelDockVisible('bottom')).toBe(false)
 
     openPluginPanel(panelKey('p2', 'l'))
-    expect(isPluginPaneVisible('left')).toBe(true)
-    expect(isPluginPaneVisible('right')).toBe(true) // independent
+    openPluginPanel(panelKey('p3', 'b'))
+    expect(isPluginPanelDockVisible('left')).toBe(true)
+    expect(isPluginPanelDockVisible('right')).toBe(true) // independent
+    expect(isPluginPanelDockVisible('bottom')).toBe(true)
 
     togglePluginPanel(panelKey('p1', 'r')) // active → closes right only
-    expect(isPluginPaneVisible('right')).toBe(false)
-    expect(isPluginPaneVisible('left')).toBe(true)
+    expect(isPluginPanelDockVisible('right')).toBe(false)
+    expect(isPluginPanelDockVisible('left')).toBe(true)
+    expect(isPluginPanelDockVisible('bottom')).toBe(true)
   })
 
-  test('removing the active panel falls back to the next panel on that edge', () => {
+  test('removing the active panel falls back to the next panel on that dock', () => {
     registerPluginPanel('p1', { id: 'a', title: 'A', component: Component })
     registerPluginPanel('p2', { id: 'b', title: 'B', component: Component })
     openPluginPanel(panelKey('p1', 'a'))
 
     removePluginPanels('p1')
-    const { edges } = getPluginPaneState()
-    expect(edges.right.activePanelKey).toBe(panelKey('p2', 'b'))
-    expect(isPluginPaneVisible('right')).toBe(true)
+    const { docks } = getPluginPanelState()
+    expect(docks.right.activePanelKey).toBe(panelKey('p2', 'b'))
+    expect(isPluginPanelDockVisible('right')).toBe(true)
 
     removePluginPanels('p2')
-    expect(isPluginPaneVisible('right')).toBe(false)
+    expect(isPluginPanelDockVisible('right')).toBe(false)
   })
 
   test('opening an unknown panel is a no-op', () => {
     openPluginPanel('nope:nope')
-    expect(isPluginPaneVisible('right')).toBe(false)
+    expect(isPluginPanelDockVisible('right')).toBe(false)
   })
 
   test('a restored active panel survives other plugins declaring first (startup order)', () => {
-    // Simulate persisted state from the last session: pane open on p2's
+    // Simulate persisted state from the last session: dock open on p2's
     // panel, which has not been declared yet in this session.
-    __setEdgeStateForTests('right', { activePanelKey: panelKey('p2', 'b'), isOpen: true, width: 420 })
+    __setDockStateForTests('right', { activePanelKey: panelKey('p2', 'b'), isOpen: true, size: 420 })
 
-    // Another plugin declares first — it must not steal or clear the edge.
+    // Another plugin declares first — it must not steal or clear the dock.
     declarePluginPanels('p1', [{ id: 'a', title: 'A' }])
-    expect(getPluginPaneState().edges.right.activePanelKey).toBe(panelKey('p2', 'b'))
-    expect(isPluginPaneVisible('right')).toBe(false) // waiting for p2
+    expect(getPluginPanelState().docks.right.activePanelKey).toBe(panelKey('p2', 'b'))
+    expect(isPluginPanelDockVisible('right')).toBe(false) // waiting for p2
 
-    // The restored plugin declares: the pane comes back on its panel.
+    // The restored plugin declares: the dock comes back on its panel.
     declarePluginPanels('p2', [{ id: 'b', title: 'B' }])
-    expect(getPluginPaneState().edges.right.activePanelKey).toBe(panelKey('p2', 'b'))
-    expect(isPluginPaneVisible('right')).toBe(true)
+    expect(getPluginPanelState().docks.right.activePanelKey).toBe(panelKey('p2', 'b'))
+    expect(isPluginPanelDockVisible('right')).toBe(true)
+  })
+})
+
+describe('dock sizing', () => {
+  test('sizes clamp to per-orientation limits (width for vertical, height for horizontal)', () => {
+    setPluginPanelDockSize('right', 10_000)
+    expect(getPluginPanelState().docks.right.size).toBe(PLUGIN_PANEL_DOCK_SIZE.vertical.max)
+    setPluginPanelDockSize('right', 1)
+    expect(getPluginPanelState().docks.right.size).toBe(PLUGIN_PANEL_DOCK_SIZE.vertical.min)
+
+    setPluginPanelDockSize('bottom', 10_000)
+    expect(getPluginPanelState().docks.bottom.size).toBe(PLUGIN_PANEL_DOCK_SIZE.horizontal.max)
+    setPluginPanelDockSize('bottom', 1)
+    expect(getPluginPanelState().docks.bottom.size).toBe(PLUGIN_PANEL_DOCK_SIZE.horizontal.min)
   })
 })
