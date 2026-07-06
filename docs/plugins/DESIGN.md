@@ -186,8 +186,11 @@ plugin-framework lifecycle events (never user or session data), see
 
 **Reserved vocabulary (do not reinvent when the need arrives):**
 `contributes.settingsPages`, `contributes.statusItems` for future contribution
-kinds; an `events.read` permission for a read-only client mirror of the
-automations `WorkspaceEventBus` (reuse that bus — never fork it); a manifest
+kinds; `contributes.locales` for plugin-supplied translation bundles (v1
+plugin strings are English-only — a plugin cannot extend the app's i18n
+registry, whose keys live in `packages/shared/src/i18n/locales/`); an
+`events.read` permission for a read-only client mirror of the automations
+`WorkspaceEventBus` (reuse that bus — never fork it); a manifest
 `dependencies` field for inter-plugin ordering. These are deliberately
 documented-but-unbuilt so v1 stays small while the names stay stable.
 
