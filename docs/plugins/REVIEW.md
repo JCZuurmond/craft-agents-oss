@@ -8,9 +8,9 @@ It folds together:
 2. the supplemental review from PR #4;
 3. the final adversarial review after PR #1 absorbed PR #6.
 
-Current reviewed head: `2dd529dc` (`claude/serene-meitner-4ksi6h`), based on
-upstream `v0.10.5` (`c9d9a26`). The Browser Pane reference plugin remains the
-stacked PR #2.
+Current reviewed code head: `2dd529dc` (`claude/serene-meitner-4ksi6h`), based
+on upstream `v0.10.5` (`c9d9a26`). This combined review document was folded into
+PR #1 at `7150d15c`. The Browser Pane reference plugin remains the stacked PR #2.
 
 ---
 
