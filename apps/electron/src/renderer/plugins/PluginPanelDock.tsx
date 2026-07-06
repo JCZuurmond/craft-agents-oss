@@ -298,7 +298,11 @@ export function PluginPanelArea({ hidden, children }: { hidden?: boolean; childr
   return (
     <div className="flex-1 min-w-0 min-h-0 flex flex-col" style={{ gap: PANEL_GAP }}>
       {!hidden && <PluginPanelDock location="top" />}
-      {children}
+      {/* Bound the content's height: without min-h-0 a flex child's implicit
+          min-height:auto lets tall content push the bottom dock off-screen. */}
+      <div className="flex-1 min-h-0 min-w-0 flex">
+        {children}
+      </div>
       {!hidden && <PluginPanelDock location="bottom" />}
     </div>
   )
