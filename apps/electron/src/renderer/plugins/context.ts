@@ -12,7 +12,7 @@ import {
   type PluginManifest,
 } from '@craft-agent/shared/plugins/types'
 import type { PluginCommands, PluginContext, PluginHooks, PluginLogger, PluginStorage, PluginUi } from './types'
-import { registerPluginPanel, panelKey, openPluginPanel, closePluginPane, getPluginPaneState } from './panel-store'
+import { registerPluginPanel, panelKey, openPluginPanel, closePluginPanelDock, getPluginPanelState } from './panel-store'
 import { registerPluginCommand, executePluginCommand } from './command-store'
 import { pluginHostHooks } from './host-hooks'
 
@@ -84,11 +84,11 @@ export function createPluginContext(manifest: PluginManifest): CreatedPluginCont
         },
         openSidePanel: (panelId) => openPluginPanel(panelKey(pluginId, panelId)),
         closeSidePanel: (panelId) => {
-          const state = getPluginPaneState()
+          const state = getPluginPanelState()
           const key = panelKey(pluginId, panelId)
           const panel = state.panels.find((p) => p.key === key)
-          if (panel && state.edges[panel.location].activePanelKey === key) {
-            closePluginPane(panel.location)
+          if (panel && state.docks[panel.location].activePanelKey === key) {
+            closePluginPanelDock(panel.location)
           }
         },
       }

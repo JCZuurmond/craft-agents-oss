@@ -705,7 +705,7 @@
   "plan.approved": "Plan aprobado, por favor ejecútalo.",
   "plan.executeImmediately": "Ejecutar el plan de inmediato",
   "plan.worksForComplex": "Ideal para planes complejos o largos",
-  "pluginPane.panelFailed": "Este panel no se pudo cargar.",
+  "pluginPanel.failed": "Este panel no se pudo cargar.",
   "preferences.placeholderLanguage": "ej., Español",
   "preview.expandPreview": "Expandir vista previa",
   "preview.failedToRenderPdf": "Error al renderizar PDF",
