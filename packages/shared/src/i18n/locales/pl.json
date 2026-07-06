@@ -651,7 +651,7 @@
   "plan.approved": "Plan zatwierdzony, wykonaj.",
   "plan.executeImmediately": "Wykonaj plan natychmiast",
   "plan.worksForComplex": "Najlepiej sprawdza się przy złożonych, dłuższych planach",
-  "pluginPane.panelFailed": "Nie udało się załadować tego panelu.",
+  "pluginPanel.failed": "Nie udało się załadować tego panelu.",
   "preferences.placeholderLanguage": "np. Polski",
   "preview.expandPreview": "Rozwiń podgląd",
   "preview.failedToRenderPdf": "Nie udało się wyrenderować PDF",

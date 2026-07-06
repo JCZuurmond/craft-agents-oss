@@ -72,8 +72,8 @@ import {
 import { SessionList, type ChatGroupingMode } from "./SessionList"
 import { MainContentPanel } from "./MainContentPanel"
 import { PanelStackContainer } from "./PanelStackContainer"
-import { PluginPaneHost } from "@/plugins/PluginPaneHost"
-import { usePluginPaneVisible } from "@/plugins/panel-store"
+import { PluginPanelDock, PluginPanelArea } from "@/plugins/PluginPanelDock"
+import { usePluginPanelDockVisible } from "@/plugins/panel-store"
 import { initializePluginRuntime } from "@/plugins/runtime"
 import { CompactSessionListFilter } from "./CompactSessionListFilter"
 import type { ChatDisplayHandle } from "./ChatDisplay"
@@ -563,10 +563,11 @@ function AppShellContent({
   const effectiveSidebarAndNavigatorHidden = isSidebarAndNavigatorHidden || isAutoCompact
 
   // Plugin runtime bootstrap (app-level: plugins activate regardless of
-  // which pane hosts are mounted) + right-edge pane visibility for the
-  // panel stack. Plugin panes are hidden in compact mode.
+  // which docks are mounted) + vertical-dock visibility for the panel
+  // stack's edge/radius model. Plugin docks are hidden in compact mode.
   React.useEffect(() => { void initializePluginRuntime() }, [])
-  const isPluginPaneVisible = usePluginPaneVisible('right') && !isAutoCompact
+  const isRightPluginDockVisible = usePluginPanelDockVisible('right') && !isAutoCompact
+  const isLeftPluginDockVisible = usePluginPanelDockVisible('left') && !isAutoCompact
 
   // What's New overlay
   const [showWhatsNew, setShowWhatsNew] = React.useState(false)
@@ -2222,9 +2223,12 @@ function AppShellContent({
           gap: PANEL_GAP,
         }}
       >
-        {/* Left-edge plugin pane + toggle rail (renders nothing without plugin panels) */}
-        {!isAutoCompact && <PluginPaneHost location="left" />}
+        {/* Left-edge plugin dock + toggle rail (renders nothing without plugin panels) */}
+        {!isAutoCompact && <PluginPanelDock location="left" />}
 
+        {/* Top/bottom plugin docks mount around the content area (renders as
+            a pass-through column when no horizontal panels exist) */}
+        <PluginPanelArea hidden={isAutoCompact}>
         <PanelStackContainer
           sidebarSlot={
             <div
@@ -3276,10 +3280,12 @@ function AppShellContent({
           }
           navigatorWidth={isAutoCompact ? sessionListWidth : (effectiveSidebarAndNavigatorHidden ? 0 : sessionListWidth)}
           isSidebarAndNavigatorHidden={effectiveSidebarAndNavigatorHidden}
-          isRightSidebarVisible={isPluginPaneVisible}
+          isLeftSidebarVisible={isLeftPluginDockVisible}
+          isRightSidebarVisible={isRightPluginDockVisible}
           isCompact={isAutoCompact}
           isResizing={!!isResizing}
         />
+        </PluginPanelArea>
 
         {/* Sidebar Resize Handle (absolute, hidden in focused mode) */}
         {!effectiveSidebarAndNavigatorHidden && (
@@ -3349,8 +3355,8 @@ function AppShellContent({
         </div>
         )}
 
-        {/* Right-edge plugin pane + toggle rail (renders nothing without plugin panels) */}
-        {!isAutoCompact && <PluginPaneHost location="right" />}
+        {/* Right-edge plugin dock + toggle rail (renders nothing without plugin panels) */}
+        {!isAutoCompact && <PluginPanelDock location="right" />}
 
       </div>
 

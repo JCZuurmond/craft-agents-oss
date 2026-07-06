@@ -12,7 +12,6 @@ main-process capabilities through stable extension points.
 | [AUTHORING.md](./AUTHORING.md) | Manifest reference + the full plugin API |
 | [SECURITY.md](./SECURITY.md) | The honest trust model, permission semantics, and the webview policy |
 | [QUICKSTART.md](./QUICKSTART.md) | Build your own plugin in 5 minutes (self-contained "Hello Pane" walkthrough) |
-| [REVIEW.md](./REVIEW.md) | Red-team architectural review of the framework (the findings this iteration addresses) |
 
 ## At a glance
 
@@ -41,7 +40,7 @@ main-process capabilities through stable extension points.
 packages/shared/src/plugins/        # manifest types, zod validation, registry (browser-safe)
 packages/shared/src/plugins/node.ts      # discovery + enablement persistence (Node-only subpath)
 apps/electron/src/main/plugin-host.ts    # authoritative registry, IPC, webview policy
-apps/electron/src/renderer/plugins/      # PluginContext, runtime, pane hosts UI
+apps/electron/src/renderer/plugins/      # PluginContext, runtime, panel dock UI
 apps/electron/src/plugins/               # built-in plugins + registration lists
 ~/.craft-agent/plugins/<id>/plugin.json  # external plugin manifests
 ~/.craft-agent/plugins.json              # enablement state
