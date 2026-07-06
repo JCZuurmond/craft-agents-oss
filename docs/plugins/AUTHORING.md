@@ -103,7 +103,7 @@ exactly what's declared — using an undeclared surface throws.
 
 | Permission | Grants access to |
 |---|---|
-| `ui.sidePanel` | `ctx.ui.*` — register/open/close side panels (left or right edge) |
+| `ui.sidePanel` | `ctx.ui.*` — register/open/close side panels on any shell edge (left/right/top/bottom) |
 | `ui.webview` | `ctx.webviewPartition` — embed web content in a hardened `<webview>` inside one of your panels |
 | `commands` | `ctx.commands.*` — register handlers for your declared commands (with their keybindings) and execute commands |
 | `storage` | `ctx.storage` — persistent KV scoped to the plugin |
@@ -165,7 +165,7 @@ export function activate(ctx: PluginContext): void {
     id: 'main',                       // unique within your plugin
     title: 'My Panel',
     icon: '🧩',                       // shown in the toggle rail
-    location: 'right',                // 'left' | 'right' (default 'right')
+    location: 'right',                // 'left' | 'right' | 'top' | 'bottom' (default 'right')
     component: MyPanel,               // React component, receives { isActive }
   })
   ctx.ui.openSidePanel('main')        // open + focus
@@ -192,11 +192,16 @@ export function activate(ctx: PluginContext): void {
 
 ### Side panels
 
-Panels appear as icons in a thin toggle rail on their shell edge (left or
-right). Clicking an icon opens the pane (resizable, per-window persisted
-width); clicking the active icon closes it. The pane host renders your
-component only while the pane is open — design panels to restore their state
-from `ctx.storage`.
+Panels appear as icons in a thin toggle rail on their shell edge — any of
+the four (the Emacs side-window model): `left` and `right` docks sit beside
+the content and resize by width; `top` and `bottom` docks span the content
+area (VS Code's bottom-panel geometry) and resize by height. Clicking an
+icon opens the dock (resizable, per-window persisted size); clicking the
+active icon closes it. The dock renders your component only while it is
+open — design panels to restore their state from `ctx.storage`.
+
+The main content panels (chat, session list) are deliberately not
+contributable in v1 — plugins extend around the spine, never into it.
 
 ### Commands and keybindings
 

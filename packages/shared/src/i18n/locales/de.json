@@ -706,7 +706,7 @@
   "plan.approved": "Plan genehmigt, bitte ausführen.",
   "plan.executeImmediately": "Den Plan sofort ausführen",
   "plan.worksForComplex": "Am besten für komplexe, umfangreichere Pläne geeignet",
-  "pluginPane.panelFailed": "Dieses Panel konnte nicht geladen werden.",
+  "pluginPanel.failed": "Dieses Panel konnte nicht geladen werden.",
   "preferences.placeholderLanguage": "z.B. Deutsch",
   "preview.expandPreview": "Vorschau erweitern",
   "preview.failedToRenderPdf": "PDF konnte nicht gerendert werden",

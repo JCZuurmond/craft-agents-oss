@@ -102,10 +102,25 @@ describe('validatePluginManifest', () => {
     expect(result.manifest?.contributes?.sidePanels?.[1]?.location).toBe('left');
   });
 
+  test('accepts every shell edge as a panel location', () => {
+    const result = validatePluginManifest({
+      ...VALID_MANIFEST,
+      contributes: {
+        sidePanels: [
+          { id: 'l', title: 'L', location: 'left' },
+          { id: 'r', title: 'R', location: 'right' },
+          { id: 't', title: 'T', location: 'top' },
+          { id: 'b', title: 'B', location: 'bottom' },
+        ],
+      },
+    });
+    expect(result.valid).toBe(true);
+  });
+
   test('rejects invalid panel locations', () => {
     const result = validatePluginManifest({
       ...VALID_MANIFEST,
-      contributes: { sidePanels: [{ id: 'main', title: 'Main', location: 'bottom' }] },
+      contributes: { sidePanels: [{ id: 'main', title: 'Main', location: 'center' }] },
     });
     expect(result.valid).toBe(false);
   });
