@@ -705,7 +705,7 @@
   "plan.approved": "Plan approved, please execute.",
   "plan.executeImmediately": "Execute the plan immediately",
   "plan.worksForComplex": "Works best for complex, longer plans",
-  "pluginPane.panelFailed": "This panel failed to load.",
+  "pluginPanel.failed": "This panel failed to load.",
   "preferences.placeholderLanguage": "e.g., English",
   "preview.expandPreview": "Expand Preview",
   "preview.failedToRenderPdf": "Failed to render PDF",
