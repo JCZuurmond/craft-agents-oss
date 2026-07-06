@@ -15,8 +15,8 @@
  * Capabilities a plugin may request. The host only grants what is declared,
  * and surfaces the declared set to the user in Settings → Plugins.
  *
- * - `ui.sidePanel` — contribute panes to the plugin pane hosts (left or right
- *                    edge of the shell; see PluginPanelLocation)
+ * - `ui.sidePanel` — contribute panels to the plugin docks on any shell edge
+ *                    (left/right/top/bottom; see PluginPanelLocation)
  * - `ui.webview`  — embed remote web content in a hardened <webview> with a
  *                   dedicated `persist:craft-plugin-{id}` session partition.
  *                   This is a sub-capability of a side panel, not a standalone
@@ -85,15 +85,27 @@ export function checkPluginApiCompatibility(manifest: PluginManifest): string | 
 // ============================================================
 
 /**
- * Shell edges that host plugin side panels. New UI locations become new
- * members of this union plus a host mount — a data change, not a new
- * architecture (the contribution-slot indirection from REVIEW.md M1).
+ * Shell edges that host plugin side panels — all four, the Emacs side-window
+ * model (`display-buffer-in-side-window` takes left/right/top/bottom).
+ * Left/right docks are vertical edges sized by width; top/bottom docks are
+ * horizontal edges sized by height, spanning the content area between the
+ * vertical docks (VS Code's bottom-panel geometry). A new UI location is a
+ * new member of this union plus a host mount — a data change, not a new
+ * architecture.
  */
-export const PLUGIN_PANEL_LOCATIONS = ['left', 'right'] as const;
+export const PLUGIN_PANEL_LOCATIONS = ['left', 'right', 'top', 'bottom'] as const;
 
 export type PluginPanelLocation = (typeof PLUGIN_PANEL_LOCATIONS)[number];
 
 export const DEFAULT_PLUGIN_PANEL_LOCATION: PluginPanelLocation = 'right';
+
+/**
+ * Resize axis of a dock edge: vertical edges (left/right) size by width,
+ * horizontal edges (top/bottom) by height.
+ */
+export function isHorizontalPanelEdge(location: PluginPanelLocation): boolean {
+  return location === 'top' || location === 'bottom';
+}
 
 /**
  * A side panel declared statically in the manifest. Declared panels are
@@ -106,11 +118,11 @@ export const DEFAULT_PLUGIN_PANEL_LOCATION: PluginPanelLocation = 'right';
 export interface PluginSidePanelDeclaration {
   /** Panel id, unique within the plugin (slug-style) */
   id: string;
-  /** Title shown in the pane header and toggle-rail tooltip */
+  /** Title shown in the dock header and toggle-rail tooltip */
   title: string;
   /** Emoji shown in the toggle rail (falls back to the manifest icon) */
   icon?: string;
-  /** Which shell edge hosts the panel (default 'right') */
+  /** Which shell edge hosts the panel: left/right/top/bottom (default 'right') */
   location?: PluginPanelLocation;
 }
 

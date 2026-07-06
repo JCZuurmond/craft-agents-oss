@@ -61,10 +61,10 @@ export const KEYS = {
   // Stores the full URL search string so switching back restores panels/focus/sidebar
   workspaceUrl: 'workspace-url',
 
-  // Plugin pane (right-hand plugin-contributed side panel)
-  pluginPaneOpen: 'plugin-pane-open',
-  pluginPaneWidth: 'plugin-pane-width',
-  pluginPaneActivePanel: 'plugin-pane-active-panel',
+  // Plugin panel docks (per shell edge via suffix = location)
+  pluginPanelDockOpen: 'plugin-panel-dock-open',
+  pluginPanelDockSize: 'plugin-panel-dock-size',
+  pluginPanelDockActivePanel: 'plugin-panel-dock-active-panel',
 } as const
 
 export type StorageKey = typeof KEYS[keyof typeof KEYS]

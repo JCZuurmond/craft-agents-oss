@@ -32,6 +32,10 @@ export interface PluginRegistryOptions {
 export class PluginRegistry {
   private entries = new Map<string, PluginRegistryEntry>();
   private disposables = new Map<string, PluginDisposable[]>();
+  /** In-flight async activations, deduped per plugin id */
+  private pendingActivations = new Map<string, Promise<boolean>>();
+  /** Set by disposeAll(): late async activations must not commit after teardown */
+  private disposed = false;
   private readonly activator: PluginActivator;
   private readonly onDidChange?: () => void;
 
@@ -97,25 +101,64 @@ export class PluginRegistry {
     }
   }
 
-  /** Activate one plugin; errors are captured on the entry, never thrown */
-  async activate(id: string): Promise<boolean> {
-    const entry = this.entries.get(id);
-    if (!entry || entry.status === 'active' || entry.incompatibility) return false;
+  /**
+   * Activate one plugin; errors are captured on the entry, never thrown.
+   *
+   * Async-safe: concurrent calls for the same id share one in-flight
+   * activation, and a result that resolves after the plugin was disabled
+   * mid-flight (or the registry was disposed) is discarded — its disposables
+   * are torn down immediately and the entry stays 'inactive'. Without this,
+   * `setEnabled(id, false)` during a slow activator would leave an active
+   * disabled plugin behind.
+   */
+  activate(id: string): Promise<boolean> {
+    const pending = this.pendingActivations.get(id);
+    if (pending) return pending;
 
-    try {
-      const result = await this.activator(entry);
-      const disposables = result == null ? [] : Array.isArray(result) ? result : [result];
-      this.disposables.set(id, disposables);
-      entry.status = 'active';
-      entry.error = undefined;
-      this.onDidChange?.();
-      return true;
-    } catch (error) {
-      entry.status = 'error';
-      entry.error = error instanceof Error ? error.message : String(error);
-      this.onDidChange?.();
-      return false;
+    const entry = this.entries.get(id);
+    if (!entry || entry.status === 'active' || entry.incompatibility || this.disposed) {
+      return Promise.resolve(false);
     }
+
+    const activation = (async (): Promise<boolean> => {
+      try {
+        const result = await this.activator(entry);
+        const disposables = result == null ? [] : Array.isArray(result) ? result : [result];
+        // Commit only if the plugin is still wanted: `enabled` reflects the
+        // latest setEnabled() intent, `disposed` covers teardown.
+        if (!entry.enabled || this.disposed) {
+          for (const disposable of disposables.reverse()) {
+            try {
+              disposable.dispose();
+            } catch {
+              // ignore teardown failures
+            }
+          }
+          this.onDidChange?.();
+          return false;
+        }
+        this.disposables.set(id, disposables);
+        entry.status = 'active';
+        entry.error = undefined;
+        this.onDidChange?.();
+        return true;
+      } catch (error) {
+        // A failure for a plugin that was disabled mid-flight is moot — the
+        // user already turned it off; don't surface a stale error state.
+        if (entry.enabled && !this.disposed) {
+          entry.status = 'error';
+          entry.error = error instanceof Error ? error.message : String(error);
+        }
+        this.onDidChange?.();
+        return false;
+      }
+    })();
+    // Register before attaching cleanup: a synchronously-throwing activator
+    // settles `activation` before this line runs, so an inline finally-delete
+    // would be overwritten by the set() below and leave a stale pending entry.
+    this.pendingActivations.set(id, activation);
+    void activation.finally(() => this.pendingActivations.delete(id));
+    return activation;
   }
 
   /** Deactivate one plugin, disposing everything it registered */
@@ -164,8 +207,13 @@ export class PluginRegistry {
     return true;
   }
 
-  /** Tear down all active plugins (app shutdown / window unload) */
+  /**
+   * Tear down all active plugins (app shutdown / window unload). Terminal:
+   * in-flight async activations are discarded when they resolve, and no new
+   * activation can start afterwards.
+   */
   disposeAll(): void {
+    this.disposed = true;
     for (const id of this.entries.keys()) {
       this.deactivate(id);
     }

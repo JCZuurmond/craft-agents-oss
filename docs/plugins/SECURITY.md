@@ -49,7 +49,7 @@ a host failure.
 
 | Permission | Grants | Enforcement |
 |---|---|---|
-| `ui.sidePanel` | panels in the left/right pane hosts | renderer-side gating (ergonomic) |
+| `ui.sidePanel` | panels in the shell-edge docks (left/right/top/bottom) | renderer-side gating (ergonomic) |
 | `ui.webview` | a hardened `<webview>` on the plugin's own partition | **main process, on every attach and navigation** |
 | `commands` | command registration/dispatch + declared keybindings | renderer-side gating (ergonomic) |
 | `storage` | KV storage under the plugin's namespace | renderer-side gating (ergonomic) |
@@ -141,7 +141,7 @@ authoritative checks are the main-process ones.
   Renderer-side activation failures are reported per window to the main host
   (`__plugins:reportRendererStatus`) so Settings reflects them too.
 - A contributed panel that throws during **render** is caught by an error
-  boundary in the pane host: the panel is quarantined with a retry affordance
+  boundary in the panel dock: the panel is quarantined with a retry affordance
   and the crash is attributed to the plugin in Settings. It cannot take down
   the shell.
 - Disposal failures during deactivation are swallowed (logged) so one bad

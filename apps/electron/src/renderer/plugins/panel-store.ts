@@ -1,15 +1,17 @@
 /**
  * Plugin Panel Store
  *
- * Registry + visibility state for plugin-contributed side panels. This is a
+ * Registry + visibility state for plugin-contributed panels. This is a
  * plain external store (useSyncExternalStore) rather than jotai because
  * registrations happen from plugin activation code that runs outside the
  * React tree (the app's JotaiProvider store is not reachable from there).
  *
  * The store is the contribution-slot registry for the `sidePanel.*` slots:
- * panels carry a `location` (one of PLUGIN_PANEL_LOCATIONS) and each shell
- * edge keeps its own open/active/width state. Adding a future edge is a data
- * change here plus one host mount in AppShell — not a new architecture.
+ * panels carry a `location` (one of PLUGIN_PANEL_LOCATIONS — every shell
+ * edge, the Emacs side-window model) and each edge's dock keeps its own
+ * open/active/size state. Vertical docks (left/right) size by width,
+ * horizontal docks (top/bottom) by height. Adding a future location is a
+ * data change here plus one dock mount — not a new architecture.
  *
  * Panels exist in one of three runtime states:
  * - 'declared' — known from the manifest's `contributes.sidePanels` block;
@@ -30,6 +32,7 @@ import type { ComponentType } from 'react'
 import {
   PLUGIN_PANEL_LOCATIONS,
   DEFAULT_PLUGIN_PANEL_LOCATION,
+  isHorizontalPanelEdge,
   type PluginPanelLocation,
   type PluginSidePanelDeclaration,
 } from '@craft-agent/shared/plugins/types'
@@ -55,24 +58,32 @@ export interface RegisteredPluginPanel {
   declared: boolean
 }
 
-export interface PluginPaneEdgeState {
-  /** Key of the panel shown when this edge's pane is open */
+export interface PluginPanelDockState {
+  /** Key of the panel shown when this dock is open */
   activePanelKey: string | null
   isOpen: boolean
-  width: number
+  /** Width for vertical docks (left/right), height for horizontal (top/bottom) */
+  size: number
 }
 
-export interface PluginPaneState {
+export interface PluginPanelStoreState {
   panels: RegisteredPluginPanel[]
-  edges: Record<PluginPanelLocation, PluginPaneEdgeState>
+  docks: Record<PluginPanelLocation, PluginPanelDockState>
 }
 
-export const PLUGIN_PANE_MIN_WIDTH = 280
-export const PLUGIN_PANE_MAX_WIDTH = 900
-export const PLUGIN_PANE_DEFAULT_WIDTH = 420
+/** Per-orientation dock size limits (px along the resize axis) */
+export const PLUGIN_PANEL_DOCK_SIZE = {
+  vertical: { min: 280, max: 900, default: 420 },
+  horizontal: { min: 140, max: 600, default: 280 },
+} as const
 
-function clampWidth(width: number): number {
-  return Math.min(PLUGIN_PANE_MAX_WIDTH, Math.max(PLUGIN_PANE_MIN_WIDTH, Math.round(width)))
+function sizeLimits(location: PluginPanelLocation) {
+  return PLUGIN_PANEL_DOCK_SIZE[isHorizontalPanelEdge(location) ? 'horizontal' : 'vertical']
+}
+
+function clampSize(location: PluginPanelLocation, size: number): number {
+  const { min, max } = sizeLimits(location)
+  return Math.min(max, Math.max(min, Math.round(size)))
 }
 
 // ============================================================
@@ -89,11 +100,6 @@ function readPersisted<T>(key: storage.StorageKey, fallback: T, location: Plugin
   try {
     const seeded = storage.getRaw(key, location)
     if (seeded !== null) return JSON.parse(seeded) as T
-    // Migration: pre-location state was persisted unsuffixed for the right edge.
-    if (location === 'right') {
-      const legacy = storage.getRaw(key)
-      if (legacy !== null) return JSON.parse(legacy) as T
-    }
   } catch {
     // localStorage unavailable or corrupt entry — use the fallback
   }
@@ -109,32 +115,35 @@ function writePersisted<T>(key: storage.StorageKey, value: T, location: PluginPa
   storage.set(key, value, location)
 }
 
-function loadEdgeState(location: PluginPanelLocation): PluginPaneEdgeState {
+function loadDockState(location: PluginPanelLocation): PluginPanelDockState {
   return {
-    activePanelKey: readPersisted<string | null>(storage.KEYS.pluginPaneActivePanel, null, location),
-    isOpen: readPersisted<boolean>(storage.KEYS.pluginPaneOpen, false, location),
-    width: clampWidth(readPersisted<number>(storage.KEYS.pluginPaneWidth, PLUGIN_PANE_DEFAULT_WIDTH, location)),
+    activePanelKey: readPersisted<string | null>(storage.KEYS.pluginPanelDockActivePanel, null, location),
+    isOpen: readPersisted<boolean>(storage.KEYS.pluginPanelDockOpen, false, location),
+    size: clampSize(
+      location,
+      readPersisted<number>(storage.KEYS.pluginPanelDockSize, sizeLimits(location).default, location),
+    ),
   }
 }
 
-function persistEdgeVisibility(location: PluginPanelLocation, edge: PluginPaneEdgeState): void {
-  writePersisted(storage.KEYS.pluginPaneOpen, edge.isOpen, location)
-  writePersisted(storage.KEYS.pluginPaneActivePanel, edge.activePanelKey, location)
+function persistDockVisibility(location: PluginPanelLocation, dock: PluginPanelDockState): void {
+  writePersisted(storage.KEYS.pluginPanelDockOpen, dock.isOpen, location)
+  writePersisted(storage.KEYS.pluginPanelDockActivePanel, dock.activePanelKey, location)
 }
 
-function initialState(): PluginPaneState {
-  const edges = {} as Record<PluginPanelLocation, PluginPaneEdgeState>
+function initialState(): PluginPanelStoreState {
+  const docks = {} as Record<PluginPanelLocation, PluginPanelDockState>
   for (const location of PLUGIN_PANEL_LOCATIONS) {
-    edges[location] = loadEdgeState(location)
+    docks[location] = loadDockState(location)
   }
-  return { panels: [], edges }
+  return { panels: [], docks }
 }
 
-let state: PluginPaneState = initialState()
+let state: PluginPanelStoreState = initialState()
 
 const listeners = new Set<() => void>()
 
-function emit(next: PluginPaneState): void {
+function emit(next: PluginPanelStoreState): void {
   state = next
   for (const listener of listeners) listener()
 }
@@ -143,54 +152,54 @@ export function panelKey(pluginId: string, panelId: string): string {
   return `${pluginId}:${panelId}`
 }
 
-function withEdge(
-  next: Pick<PluginPaneState, 'panels'> & { edges?: PluginPaneState['edges'] },
+function withDock(
+  next: Pick<PluginPanelStoreState, 'panels'> & { docks?: PluginPanelStoreState['docks'] },
   location: PluginPanelLocation,
-  edge: PluginPaneEdgeState,
-): PluginPaneState {
-  const edges = { ...(next.edges ?? state.edges), [location]: edge }
-  persistEdgeVisibility(location, edge)
-  return { panels: next.panels, edges }
+  dock: PluginPanelDockState,
+): PluginPanelStoreState {
+  const docks = { ...(next.docks ?? state.docks), [location]: dock }
+  persistDockVisibility(location, dock)
+  return { panels: next.panels, docks }
 }
 
 /**
- * Recompute an edge after panels changed. Only a *removal* of the active
- * panel reassigns or closes the edge — an active key that simply hasn't been
+ * Recompute a dock after panels changed. Only a *removal* of the active
+ * panel reassigns or closes the dock — an active key that simply hasn't been
  * declared yet (startup restore races plugin declaration order) is left
- * untouched, so the pane reappears when its panel arrives instead of being
+ * untouched, so the dock reappears when its panel arrives instead of being
  * stolen by whichever plugin declares first. Persisted state is only
- * rewritten when the edge actually changes.
+ * rewritten when the dock actually changes.
  */
-function reconcileEdge(
+function reconcileDock(
   oldPanels: RegisteredPluginPanel[],
   newPanels: RegisteredPluginPanel[],
   location: PluginPanelLocation,
-): PluginPaneEdgeState {
-  const edge = state.edges[location]
-  if (!edge.activePanelKey) return edge
-  const key = edge.activePanelKey
+): PluginPanelDockState {
+  const dock = state.docks[location]
+  if (!dock.activePanelKey) return dock
+  const key = dock.activePanelKey
   const isPresent = newPanels.some((p) => p.key === key && p.location === location)
-  if (isPresent) return edge
+  if (isPresent) return dock
   const wasPresent = oldPanels.some((p) => p.key === key && p.location === location)
-  if (!wasPresent) return edge
+  if (!wasPresent) return dock
   // Active panel was removed: fall back to the first remaining panel, or close.
   const fallback = newPanels.find((p) => p.location === location)?.key ?? null
   const next = {
-    ...edge,
-    activePanelKey: edge.isOpen ? fallback : null,
-    isOpen: edge.isOpen && fallback !== null,
+    ...dock,
+    activePanelKey: dock.isOpen ? fallback : null,
+    isOpen: dock.isOpen && fallback !== null,
   }
-  if (next.activePanelKey === edge.activePanelKey && next.isOpen === edge.isOpen) return edge
+  if (next.activePanelKey === dock.activePanelKey && next.isOpen === dock.isOpen) return dock
   return next
 }
 
 function emitPanels(panels: RegisteredPluginPanel[]): void {
   const oldPanels = state.panels
-  let next: PluginPaneState = { ...state, panels }
+  let next: PluginPanelStoreState = { ...state, panels }
   for (const location of PLUGIN_PANEL_LOCATIONS) {
-    const edge = reconcileEdge(oldPanels, panels, location)
-    if (edge !== state.edges[location]) {
-      next = withEdge(next, location, edge)
+    const dock = reconcileDock(oldPanels, panels, location)
+    if (dock !== state.docks[location]) {
+      next = withDock(next, location, dock)
     }
   }
   emit(next)
@@ -319,7 +328,7 @@ export function resetPluginPanel(key: string): void {
 }
 
 // ============================================================
-// Edge visibility mutations (called from pane host UI and plugins)
+// Dock visibility mutations (called from dock UI and plugins)
 // ============================================================
 
 /** `${pluginId}:${panelId}` → hook payload parts (plugin ids contain no ':') */
@@ -331,9 +340,10 @@ function splitPanelKey(key: string): { pluginId: string; panelId: string } {
 export function openPluginPanel(key: string): void {
   const panel = state.panels.find((p) => p.key === key)
   if (!panel) return
-  const wasOpenHere = state.edges[panel.location].isOpen && state.edges[panel.location].activePanelKey === key
-  emit(withEdge(state, panel.location, {
-    ...state.edges[panel.location],
+  const dock = state.docks[panel.location]
+  const wasOpenHere = dock.isOpen && dock.activePanelKey === key
+  emit(withDock(state, panel.location, {
+    ...dock,
     activePanelKey: key,
     isOpen: true,
   }))
@@ -342,12 +352,12 @@ export function openPluginPanel(key: string): void {
   }
 }
 
-export function closePluginPane(location: PluginPanelLocation): void {
-  const edge = state.edges[location]
-  if (!edge.isOpen) return
-  emit(withEdge(state, location, { ...edge, isOpen: false }))
-  if (edge.activePanelKey) {
-    pluginHostHooks.emit('panel:closed', { ...splitPanelKey(edge.activePanelKey), location })
+export function closePluginPanelDock(location: PluginPanelLocation): void {
+  const dock = state.docks[location]
+  if (!dock.isOpen) return
+  emit(withDock(state, location, { ...dock, isOpen: false }))
+  if (dock.activePanelKey) {
+    pluginHostHooks.emit('panel:closed', { ...splitPanelKey(dock.activePanelKey), location })
   }
 }
 
@@ -355,57 +365,57 @@ export function closePluginPane(location: PluginPanelLocation): void {
 export function togglePluginPanel(key: string): void {
   const panel = state.panels.find((p) => p.key === key)
   if (!panel) return
-  const edge = state.edges[panel.location]
-  if (edge.isOpen && edge.activePanelKey === key) {
-    closePluginPane(panel.location)
+  const dock = state.docks[panel.location]
+  if (dock.isOpen && dock.activePanelKey === key) {
+    closePluginPanelDock(panel.location)
   } else {
     openPluginPanel(key)
   }
 }
 
-export function setPluginPaneWidth(location: PluginPanelLocation, width: number): void {
-  const clamped = clampWidth(width)
-  const edge = state.edges[location]
-  if (clamped === edge.width) return
-  writePersisted(storage.KEYS.pluginPaneWidth, clamped, location)
-  emit({ ...state, edges: { ...state.edges, [location]: { ...edge, width: clamped } } })
+export function setPluginPanelDockSize(location: PluginPanelLocation, size: number): void {
+  const clamped = clampSize(location, size)
+  const dock = state.docks[location]
+  if (clamped === dock.size) return
+  writePersisted(storage.KEYS.pluginPanelDockSize, clamped, location)
+  emit({ ...state, docks: { ...state.docks, [location]: { ...dock, size: clamped } } })
 }
 
 // ============================================================
 // Subscription
 // ============================================================
 
-export function subscribePluginPane(listener: () => void): () => void {
+export function subscribePluginPanels(listener: () => void): () => void {
   listeners.add(listener)
   return () => listeners.delete(listener)
 }
 
-export function getPluginPaneState(): PluginPaneState {
+export function getPluginPanelState(): PluginPanelStoreState {
   return state
 }
 
-export function usePluginPaneState(): PluginPaneState {
-  return useSyncExternalStore(subscribePluginPane, getPluginPaneState)
+export function usePluginPanelState(): PluginPanelStoreState {
+  return useSyncExternalStore(subscribePluginPanels, getPluginPanelState)
 }
 
-/** Is an edge's pane open on a panel that actually exists? */
-export function isPluginPaneVisible(location: PluginPanelLocation): boolean {
-  const edge = state.edges[location]
-  return edge.isOpen
-    && edge.activePanelKey !== null
-    && state.panels.some((p) => p.key === edge.activePanelKey && p.location === location)
+/** Is a dock open on a panel that actually exists? */
+export function isPluginPanelDockVisible(location: PluginPanelLocation): boolean {
+  const dock = state.docks[location]
+  return dock.isOpen
+    && dock.activePanelKey !== null
+    && state.panels.some((p) => p.key === dock.activePanelKey && p.location === location)
 }
 
-/** Reactive variant of isPluginPaneVisible for core layout wiring (AppShell) */
-export function usePluginPaneVisible(location: PluginPanelLocation): boolean {
-  return useSyncExternalStore(subscribePluginPane, () => isPluginPaneVisible(location))
+/** Reactive variant of isPluginPanelDockVisible for core layout wiring (AppShell) */
+export function usePluginPanelDockVisible(location: PluginPanelLocation): boolean {
+  return useSyncExternalStore(subscribePluginPanels, () => isPluginPanelDockVisible(location))
 }
 
 /**
- * TEST ONLY: force an edge's state, bypassing panel-existence checks, to
+ * TEST ONLY: force a dock's state, bypassing panel-existence checks, to
  * simulate persisted state restored before any plugin has declared its
  * panels. Never call from product code.
  */
-export function __setEdgeStateForTests(location: PluginPanelLocation, edge: PluginPaneEdgeState): void {
-  emit({ ...state, edges: { ...state.edges, [location]: edge } })
+export function __setDockStateForTests(location: PluginPanelLocation, dock: PluginPanelDockState): void {
+  emit({ ...state, docks: { ...state.docks, [location]: dock } })
 }
