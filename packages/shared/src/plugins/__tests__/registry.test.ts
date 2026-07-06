@@ -164,6 +164,117 @@ describe('PluginRegistry', () => {
     });
   });
 
+  test('async activation is discarded when the plugin is disabled mid-flight', async () => {
+    let resolveActivation!: () => void;
+    let lateDisposed = false;
+    const registry = new PluginRegistry({
+      activate: () =>
+        new Promise<PluginDisposable>((resolve) => {
+          resolveActivation = () => resolve({ dispose: () => { lateDisposed = true; } });
+        }),
+    });
+    registry.register(plugin('slow'), true);
+
+    const activation = registry.activate('slow');
+    await registry.setEnabled('slow', false); // user toggles off during the await
+
+    resolveActivation();
+    expect(await activation).toBe(false);
+
+    // The late result must not leave an active disabled plugin behind; its
+    // disposables are torn down immediately.
+    expect(registry.get('slow')?.status).toBe('inactive');
+    expect(registry.get('slow')?.enabled).toBe(false);
+    expect(lateDisposed).toBe(true);
+  });
+
+  test('async activation failure after mid-flight disable stays inactive, not errored', async () => {
+    let rejectActivation!: () => void;
+    const registry = new PluginRegistry({
+      activate: () =>
+        new Promise<PluginDisposable>((_resolve, reject) => {
+          rejectActivation = () => reject(new Error('late boom'));
+        }),
+    });
+    registry.register(plugin('slow'), true);
+
+    const activation = registry.activate('slow');
+    await registry.setEnabled('slow', false);
+
+    rejectActivation();
+    expect(await activation).toBe(false);
+    expect(registry.get('slow')?.status).toBe('inactive');
+    expect(registry.get('slow')?.error).toBeUndefined();
+  });
+
+  test('disable then re-enable during activation commits the in-flight result once', async () => {
+    let activatorRuns = 0;
+    let resolveActivation!: () => void;
+    const registry = new PluginRegistry({
+      activate: () => {
+        activatorRuns += 1;
+        return new Promise<void>((resolve) => {
+          resolveActivation = () => resolve();
+        });
+      },
+    });
+    registry.register(plugin('slow'), true);
+
+    const first = registry.activate('slow');
+    await registry.setEnabled('slow', false);
+    const second = registry.setEnabled('slow', true); // shares the in-flight activation
+
+    resolveActivation();
+    expect(await first).toBe(true);
+    expect(await second).toBe(true);
+    expect(activatorRuns).toBe(1);
+    expect(registry.get('slow')?.status).toBe('active');
+  });
+
+  test('concurrent activate calls share one in-flight activation', async () => {
+    let activatorRuns = 0;
+    let resolveActivation!: () => void;
+    const registry = new PluginRegistry({
+      activate: () => {
+        activatorRuns += 1;
+        return new Promise<void>((resolve) => {
+          resolveActivation = () => resolve();
+        });
+      },
+    });
+    registry.register(plugin('slow'), true);
+
+    const a = registry.activate('slow');
+    const b = registry.activate('slow');
+    resolveActivation();
+
+    expect(await a).toBe(true);
+    expect(await b).toBe(true);
+    expect(activatorRuns).toBe(1);
+  });
+
+  test('disposeAll is terminal: late activations are discarded and new ones refused', async () => {
+    let resolveActivation!: () => void;
+    let lateDisposed = false;
+    const registry = new PluginRegistry({
+      activate: () =>
+        new Promise<PluginDisposable>((resolve) => {
+          resolveActivation = () => resolve({ dispose: () => { lateDisposed = true; } });
+        }),
+    });
+    registry.register(plugin('slow'), true);
+
+    const activation = registry.activate('slow');
+    registry.disposeAll();
+
+    resolveActivation();
+    expect(await activation).toBe(false);
+    expect(registry.get('slow')?.status).toBe('inactive');
+    expect(lateDisposed).toBe(true);
+
+    expect(await registry.activate('slow')).toBe(false);
+  });
+
   test('listInfo carries declarative contributions from the manifest', () => {
     const registry = new PluginRegistry({ activate: () => {} });
     const contributing: LoadedPlugin = {
