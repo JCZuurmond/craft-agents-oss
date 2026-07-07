@@ -3,15 +3,18 @@
 ## The manifest
 
 Every plugin is described by a manifest. Built-in plugins export it from
-`manifest.ts`; external plugins put it in `plugin.json`. Validation is zod-based
-(`validatePluginManifest` in `@craft-agent/shared/plugins`) and runs on every
-discovery — invalid manifests are skipped, never crash the host.
+`manifest.ts` (typed as `PluginManifest`, checked by the compiler); external
+plugins put it in `plugin.json`, validated with zod
+(`validatePluginManifest` in `@craft-agent/shared/plugins`) at every
+discovery. An external manifest that fails validation never crashes the
+host — the directory is listed in Settings → Plugins with the errors so you
+see *why* it didn't load.
 
 ```jsonc
 {
   // Required
   "id": "my-plugin",          // slug: lowercase letters, digits, hyphens; unique
-  "name": "My Plugin",        // display name (Settings, pane headers)
+  "name": "My Plugin",        // display name (Settings, dock headers)
   "version": "0.1.0",         // semver
   "permissions": [],          // see below — empty array is valid
 
@@ -81,6 +84,12 @@ inferred default — most plugins never declare it:
 The common override is a plugin with declared panels that also needs a
 background listener from startup: declare `["onStartup"]`.
 
+Note the v1 scope of an explicit list: it decides **startup eagerness**
+(`onStartup` present or not). The per-id `onPanel:`/`onCommand:` entries are
+validated against your declared contributions and document intent, but a lazy
+plugin activates on the first use of *any* of its declared panels or
+commands — the host does not restrict activation to the listed ids.
+
 At activation time, register the component for each declared panel with the
 same panel id. The declaration is the source of truth for title/icon/location;
 the registration supplies the component:
@@ -140,7 +149,7 @@ discover → register → (enabled?) → activate(ctx) → … → deactivate/di
   Settings — renderer-side failures are reported per window to the main host)
   and never affects other plugins or the host.
 - A panel component that throws during render is quarantined by an error
-  boundary: the pane shows the failure with a Retry button, the crash is
+  boundary: the dock shows the failure with a Retry button, the crash is
   attributed to your plugin in Settings, and the rest of the shell is
   unaffected.
 
@@ -256,9 +265,10 @@ export const activate: PluginMainEntry = (ctx) => {
 }
 ```
 
-Channels are namespaced per plugin (`plugin:<id>:<channel>` on the wire), and
-the main process validates on every call that the target plugin is enabled and
-declares `ipc`. Note the honest caveat from [SECURITY.md](./SECURITY.md): in a
+Handlers are namespaced per plugin (the renderer reaches them through the
+host's single `__plugins:invoke` bridge, addressed by plugin id + channel),
+and the main process validates on every call that the target plugin is
+enabled, actively running, and declares `ipc`. Note the honest caveat from [SECURITY.md](./SECURITY.md): in a
 shared renderer context the main process cannot attribute *which* in-process
 caller named a plugin id, so "only your own handlers" is a convention the
 typed `ctx.invoke` upholds, not a cross-plugin enforcement boundary.
@@ -309,5 +319,5 @@ Plugins are testable through the framework alone:
 - registry lifecycle, manifest validation, and API-version gating are covered
   by `packages/shared/src/plugins/__tests__/`
 
-Run with `bun test apps/electron/src/plugins` and
-`bun test packages/shared/src/plugins`.
+Run with `bun test packages/shared/src/plugins` and
+`bun test apps/electron/src/renderer/plugins/__tests__`.
