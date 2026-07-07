@@ -153,6 +153,10 @@ export function activate(ctx: PluginContext): void {
   // Identity
   ctx.manifest            // your validated PluginManifest
 
+  // The host's React — build UI without importing your own copy or using JSX.
+  // Essential for external, no-build plugins; built-ins may import react too.
+  ctx.react.createElement('div', null, 'hi')
+
   // Logging — prefixed with [plugin:<id>]
   ctx.logger.info('hello')
 
@@ -266,9 +270,19 @@ import it from anywhere. Discovery/persistence code that touches the
 filesystem lives in `@craft-agent/shared/plugins/node` — main process and
 tests only. Plugin code should never need the node subpath.
 
-## Registration (built-in plugins)
+## Getting your plugin loaded
 
-Three one-line registrations, all data files:
+There are two ways to ship a plugin; the manifest and `activate(ctx)` API are
+identical for both.
+
+**External (drop-in, no rebuild)** — the easy path for custom plugins. Put the
+plugin folder under `~/.craft-agent/plugins/<id>/` with its `plugin.json` and
+the entry files named in `entries` (e.g. `renderer.mjs`, `main.mjs`); the host
+loads the code from disk. No registration files, no build of the app. See
+[INSTALL.md](./INSTALL.md).
+
+**Built-in (compiled with the app)** — three one-line registrations, all data
+files:
 
 1. `apps/electron/src/plugins/manifests.ts` → add your manifest to
    `BUILTIN_PLUGIN_MANIFESTS` (imported by main *and* renderer — keep your
@@ -282,9 +296,15 @@ Three one-line registrations, all data files:
 
 Plugins are testable through the framework alone:
 
-- validate the manifest with `validatePluginManifest`
+- validate the manifest with `validatePluginManifest`, or a whole folder with
+  `validatePluginDirectory` (`@craft-agent/shared/plugins/node`) — the CLI
+  `bun run plugin:validate <dir>` wraps it
 - activate against a real `createPluginContext(manifest)` and assert on
-  `getPluginPaneState()`
+  `getPluginPanelState()`
+- for external loading, inject a fake module via
+  `setExternalRendererModuleLoader` / `setExternalMainModuleLoader` and assert
+  the plugin registers its panels/handlers (see
+  `apps/electron/src/renderer/plugins/__tests__/external-loading.test.ts`)
 - SSR-render the registered component (`react-dom/server`) for a mount smoke test
 - registry lifecycle, manifest validation, and API-version gating are covered
   by `packages/shared/src/plugins/__tests__/`

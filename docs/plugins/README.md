@@ -3,12 +3,15 @@
 Plugins add features to Craft Agents **without modifying core** (issue #256).
 A plugin declares what it needs (permissions) and what it offers (declarative
 contributions) in a manifest, gets a typed, permission-gated context at
-activation, and contributes UI (side panels on either shell edge) and
-main-process capabilities through stable extension points.
+activation, and contributes UI (side panels on any shell edge) and
+main-process capabilities through stable extension points. Plugins ship
+either **in-tree** (compiled with the app) or **external** — a folder dropped
+into `~/.craft-agent/plugins/` and loaded from disk, no rebuild needed.
 
 | Doc | What's in it |
 |---|---|
 | [DESIGN.md](./DESIGN.md) | Codebase findings, design decisions, extension-point inventory, how core stays decoupled |
+| [INSTALL.md](./INSTALL.md) | Install/author an **external** plugin (drop-in folder, no build step), the `plugin` CLI, and the trust model |
 | [AUTHORING.md](./AUTHORING.md) | Manifest reference + the full plugin API |
 | [SECURITY.md](./SECURITY.md) | The honest trust model, permission semantics, and the webview policy |
 | [QUICKSTART.md](./QUICKSTART.md) | Build your own plugin in 5 minutes (self-contained "Hello Pane" walkthrough) |
@@ -28,9 +31,16 @@ main-process capabilities through stable extension points.
 - **Versioned contract**: manifests pin the `apiVersion` they target; the
   host refuses incompatible plugins with a visible reason instead of breaking
   them silently on upgrade.
-- **External plugins** are discovered from `~/.craft-agent/plugins/<id>/plugin.json`
-  (manifest-only today, labelled as such in Settings; external *code* loading
-  is future work — see DESIGN.md).
+- **External plugins** live at `~/.craft-agent/plugins/<id>/` with a
+  `plugin.json` and their entry files; the host discovers, validates, and
+  **loads their code** at runtime (renderer entry via `entries.renderer`,
+  main entry via `entries.main`). No rebuild — restart to discover a new
+  folder. See [INSTALL.md](./INSTALL.md). Directories whose manifest fails to
+  validate are listed in Settings with the reason instead of vanishing.
+- **Trust:** external code runs in-process with the app's access, so enabling
+  an external plugin asks for consent (surfacing its permissions). The
+  framework validates; the installer decides — the editor/Obsidian model
+  (see [SECURITY.md](./SECURITY.md)).
 - **Enable/disable** lives in `~/.craft-agent/plugins.json` and in
   **Settings → Plugins**; toggling is live across windows.
 

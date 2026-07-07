@@ -286,6 +286,33 @@ export interface LoadedPlugin {
   path?: string;
 }
 
+/**
+ * An external plugin directory that could not be loaded: its manifest is
+ * missing, unparseable, invalid, or its `id` doesn't match the directory
+ * name. Surfaced in Settings (with the reasons) instead of being dropped
+ * silently, so a plugin author sees *why* their plugin didn't appear.
+ */
+export interface InvalidExternalPlugin {
+  /** Directory name — the only stable identifier for a plugin that won't parse */
+  id: string;
+  /** Absolute path to the plugin directory */
+  path: string;
+  /** Human-readable validation/load errors */
+  errors: string[];
+}
+
+/** Result of discovering external plugins: the valid ones and the rejected ones */
+export interface ExternalPluginDiscovery {
+  plugins: LoadedPlugin[];
+  invalid: InvalidExternalPlugin[];
+}
+
+/** Absolute, host-resolved entry file paths for an external plugin */
+export interface PluginEntryPaths {
+  renderer?: string;
+  main?: string;
+}
+
 /** Runtime lifecycle status tracked by a host's registry */
 export type PluginStatus = 'inactive' | 'active' | 'error';
 
@@ -314,14 +341,30 @@ export interface PluginInfo {
   description?: string;
   icon?: string;
   permissions: PluginPermission[];
+  /** Plugin API version targeted (missing = 1) — needed to reconstruct a manifest renderer-side */
+  apiVersion?: number;
   /** Static contribution metadata declared in the manifest */
   contributes?: PluginContributions;
+  /** Declared activation events (needed to reconstruct a manifest renderer-side) */
+  activationEvents?: PluginActivationEvent[];
   source: PluginSource;
   enabled: boolean;
   status: PluginStatus;
   error?: string;
   /** Set when the host can never activate this plugin (see PluginRegistryEntry) */
   incompatibility?: string;
+  /**
+   * Absolute, host-resolved paths to this plugin's entry files (external
+   * plugins only). The renderer loads `entryPaths.renderer` at activation
+   * time; built-in plugins have their code compiled in and leave this unset.
+   */
+  entryPaths?: PluginEntryPaths;
+  /**
+   * True when this plugin's code is loaded from disk at runtime (external
+   * `source: 'user'` plugins). The Settings UI uses this to gate the trust
+   * consent shown before enabling untrusted third-party code.
+   */
+  external?: boolean;
 }
 
 // ============================================================
