@@ -13,6 +13,7 @@ Core business logic package for Craft Agent:
 - `src/projects/` — workspace-scoped projects (config + assets); sessions bind via `projectId`
 - `src/config/` — config/preferences/theme/watcher
 - `src/credentials/` — encrypted credential management
+- `src/plugins/` — plugin manifest types, zod validation, host-agnostic registry (browser-safe); discovery/enablement persistence in the Node-only `plugins/node` subpath
 
 ## Commands
 From repo root:
