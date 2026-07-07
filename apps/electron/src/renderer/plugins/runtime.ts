@@ -2,7 +2,7 @@
  * Renderer Plugin Runtime
  *
  * Owns renderer-side plugin activation for this window, independent of any
- * particular UI host (the pane hosts only *render* contributions). Bootstraps
+ * particular UI host (the panel docks only *render* contributions). Bootstraps
  * from AppShell at app level, keeps enablement in sync with the main-process
  * host live, and reports renderer-side failures back to main so Settings
  * shows the truth for this window too.
@@ -353,7 +353,7 @@ export async function retryPluginPanel(key: string): Promise<void> {
 }
 
 /**
- * Called by the pane host's error boundary when a contributed component
+ * Called by the panel dock's error boundary when a contributed component
  * throws during render: quarantine the panel; the panel-store subscription
  * then attributes the failure to the plugin in Settings (main aggregates
  * per-window renderer status), and a successful retry clears it.
