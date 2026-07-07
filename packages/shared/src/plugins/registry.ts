@@ -25,7 +25,10 @@ export type PluginActivator = (
 
 export interface PluginRegistryOptions {
   activate: PluginActivator;
-  /** Optional hook invoked after a plugin is fully deactivated */
+  /**
+   * Optional hook invoked after any entry state change — activation commit,
+   * activation error, discarded late activation, enablement flip, deactivation.
+   */
   onDidChange?: () => void;
 }
 
