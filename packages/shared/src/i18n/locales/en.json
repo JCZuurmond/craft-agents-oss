@@ -1117,7 +1117,6 @@
   "settings.plugins.description": "Extensions that add features and side panels",
   "settings.plugins.enableAnyway": "Enable anyway",
   "settings.plugins.external": "Third-party — loaded from disk",
-  "settings.plugins.externalManifestOnly": "Manifest only — external plugin code is not loaded in this version",
   "settings.plugins.incompatible": "Incompatible",
   "settings.plugins.installed": "Installed Plugins",
   "settings.plugins.installedDesc": "Plugins extend Craft Agents without modifying it. External plugins live in ~/.craft-agent/plugins.",
