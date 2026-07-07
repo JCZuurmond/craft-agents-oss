@@ -1,0 +1,10 @@
+{
+  "name": "@craft-agent/scratchpad-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "record": "node ../../demo/record.mjs scratchpad",
+    "comment": "node ../../demo/comment-demos.mjs scratchpad"
+  },
+  "devDependencies": {}
+}

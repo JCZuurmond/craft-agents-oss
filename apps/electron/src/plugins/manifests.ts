@@ -13,5 +13,8 @@
  */
 
 import type { PluginManifest } from '@craft-agent/shared/plugins/types'
+import { SCRATCHPAD_PLUGIN_MANIFEST } from './scratchpad/manifest'
 
-export const BUILTIN_PLUGIN_MANIFESTS: PluginManifest[] = []
+export const BUILTIN_PLUGIN_MANIFESTS: PluginManifest[] = [
+  SCRATCHPAD_PLUGIN_MANIFEST,
+]
