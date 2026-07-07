@@ -2,12 +2,14 @@
 
 ## The trust model, honestly
 
-**v1 plugins are trusted, first-party code.** Plugin code ships in-tree,
-bundled with the app, and reviewed like any other app code; external plugin
-*code* is never loaded (only external manifests are listed — see below). The
-permission system exists for **intent declaration, user-facing surfacing, and
-developer ergonomics** — it is *not* a sandbox for the plugin's own renderer
-code, and this document does not pretend otherwise. (This is the honest
+**v1 plugins are trusted code.** Built-in plugin code ships in-tree, bundled
+with the app, and reviewed like any other app code; external plugin code is
+loaded from disk only after the user explicitly consents in Settings —
+trusted-by-install, like a VS Code extension or an Obsidian community plugin
+(see "External plugins" below). The permission system exists for **intent
+declaration, user-facing surfacing, and developer ergonomics** — it is *not*
+a sandbox for the plugin's own renderer code, and this document does not
+pretend otherwise. (This is the honest
 posture Obsidian takes for its community plugins: the trust boundary is the
 author, not a runtime cage.)
 
@@ -25,12 +27,14 @@ from the renderer. Everything in "Embedded web content" below is a real,
 enforced guarantee. The rest of the model is defense in depth plus honesty
 about where the line sits today.
 
-### Goals for external-code loading (not yet enforced)
+### Goals for isolated loading of untrusted code (not yet enforced)
 
-When external plugin code loading lands, the following must become *enforced*
-guarantees before the first external plugin runs (tracked in
-[DESIGN.md](./DESIGN.md) future work; candidate mechanisms: a separate
-extension-host process à la VS Code, or an isolated realm à la Figma):
+External plugin code currently loads in-process, gated on the installer's
+explicit trust consent. Before the app ever runs plugin code the user has
+*not* vouched for (marketplace-style installs), the following must become
+*enforced* guarantees (tracked in [DESIGN.md](./DESIGN.md) future work;
+candidate mechanisms: a separate extension-host process à la VS Code, or an
+isolated realm à la Figma):
 
 - no access to the credential store, app/workspace config, sessions, sources
 - no Node.js, Electron APIs, or filesystem
@@ -67,7 +71,7 @@ plugin-framework lifecycle events (plugin/panel/command lifecycle), never
 keys, user content, or session data.
 
 `ui.webview` is a sub-capability of a panel (the `<webview>` renders inside a
-pane the plugin contributes), not a standalone contribution — it sits in the
+panel the plugin contributes), not a standalone contribution — it sits in the
 permission list because it changes the app's security posture (window-level
 `webviewTag`) and therefore must be user-visible.
 
