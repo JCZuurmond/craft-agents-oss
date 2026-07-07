@@ -997,7 +997,6 @@
   "settings.plugins.description": "Rozszerzenia dodające funkcje i panele boczne",
   "settings.plugins.enableAnyway": "Włącz mimo to",
   "settings.plugins.external": "Zewnętrzna — ładowana z dysku",
-  "settings.plugins.externalManifestOnly": "Tylko manifest — kod zewnętrznych wtyczek nie jest ładowany w tej wersji",
   "settings.plugins.incompatible": "Niezgodny",
   "settings.plugins.installed": "Zainstalowane wtyczki",
   "settings.plugins.installedDesc": "Wtyczki rozszerzają Craft Agents bez jego modyfikowania. Zewnętrzne wtyczki znajdują się w ~/.craft-agent/plugins.",
