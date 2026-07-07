@@ -5,6 +5,8 @@ import { join } from 'path';
 import {
   getPluginsDir,
   loadExternalPlugins,
+  loadExternalPluginsDetailed,
+  resolvePluginEntryFile,
   loadPluginsConfig,
   savePluginsConfig,
   isPluginEnabled,
@@ -65,6 +67,70 @@ describe('loadExternalPlugins', () => {
   test('skips plugins whose manifest id does not match the directory name', () => {
     writePlugin('claims-other-id', manifest('web-browser'));
     expect(loadExternalPlugins(configDir)).toEqual([]);
+  });
+});
+
+describe('loadExternalPluginsDetailed', () => {
+  test('separates valid plugins from invalid directories with reasons', () => {
+    writePlugin('good', manifest('good'));
+    writePlugin('bad-schema', { id: 'bad-schema', name: 'x' }); // missing version/permissions
+    writePlugin('mismatch', manifest('some-other-id'));
+    const corruptDir = join(getPluginsDir(configDir), 'corrupt');
+    mkdirSync(corruptDir, { recursive: true });
+    writeFileSync(join(corruptDir, 'plugin.json'), '{not json');
+
+    const { plugins, invalid } = loadExternalPluginsDetailed(configDir);
+
+    expect(plugins.map((p) => p.manifest.id)).toEqual(['good']);
+    const byId = Object.fromEntries(invalid.map((i) => [i.id, i]));
+    expect(Object.keys(byId).sort()).toEqual(['bad-schema', 'corrupt', 'mismatch']);
+    expect(byId['bad-schema']!.errors.join(' ')).toContain('version');
+    expect(byId['mismatch']!.errors.join(' ')).toContain('must match its directory name');
+    expect(byId['corrupt']!.errors.join(' ')).toContain('JSON');
+    expect(byId['mismatch']!.path).toBe(join(getPluginsDir(configDir), 'mismatch'));
+  });
+
+  test('directories without a manifest are ignored, not reported as invalid', () => {
+    mkdirSync(join(getPluginsDir(configDir), 'not-a-plugin'), { recursive: true });
+    const { plugins, invalid } = loadExternalPluginsDetailed(configDir);
+    expect(plugins).toEqual([]);
+    expect(invalid).toEqual([]);
+  });
+});
+
+describe('resolvePluginEntryFile', () => {
+  test('resolves a declared entry file inside the plugin directory', () => {
+    writePlugin('alpha', manifest('alpha', { entries: { renderer: 'renderer.mjs' } }));
+    const dir = join(getPluginsDir(configDir), 'alpha');
+    writeFileSync(join(dir, 'renderer.mjs'), 'export function activate() {}');
+    const plugin = loadExternalPlugins(configDir).find((p) => p.manifest.id === 'alpha')!;
+
+    expect(resolvePluginEntryFile(plugin, 'renderer')).toBe(join(dir, 'renderer.mjs'));
+    expect(resolvePluginEntryFile(plugin, 'main')).toBeNull(); // not declared
+  });
+
+  test('returns null when the declared entry file does not exist', () => {
+    writePlugin('beta', manifest('beta', { entries: { renderer: 'missing.mjs' } }));
+    const plugin = loadExternalPlugins(configDir).find((p) => p.manifest.id === 'beta')!;
+    expect(resolvePluginEntryFile(plugin, 'renderer')).toBeNull();
+  });
+
+  test('refuses an entry path that escapes the plugin directory', () => {
+    writePlugin('evil', manifest('evil', { entries: { renderer: '../evil.mjs' } }));
+    // Place a real file where the traversal would land, to prove it's the
+    // boundary check (not a missing file) that blocks it.
+    writeFileSync(join(getPluginsDir(configDir), 'evil.mjs'), 'export function activate() {}');
+    const plugin = loadExternalPlugins(configDir).find((p) => p.manifest.id === 'evil')!;
+    expect(resolvePluginEntryFile(plugin, 'renderer')).toBeNull();
+  });
+
+  test('built-in plugins (no path) always resolve to null', () => {
+    expect(
+      resolvePluginEntryFile(
+        { manifest: manifest('builtin') as PluginManifest, source: 'builtin' },
+        'renderer',
+      ),
+    ).toBeNull();
   });
 });
 

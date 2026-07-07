@@ -116,8 +116,13 @@ it live in every open window.
   `apps/electron/src/plugins/main-entries.ts`, register handlers with
   `ctx.handle(channel, fn)`, and call them from the renderer with
   `ctx.invoke(channel, args)`.
+- **Ship it without rebuilding the app:** the same manifest + `activate(ctx)`
+  works as an **external** plugin — drop the folder into
+  `~/.craft-agent/plugins/<id>/` and the host loads it from disk. Use
+  `ctx.react` instead of a `react` import so no bundler is needed. Scaffold one
+  with `bun run plugin:new <id>`. See [INSTALL.md](./INSTALL.md).
 - **Test it:** activate against `createPluginContext(manifest)` and assert on
-  `getPluginPaneState()`; validate your manifest with
+  `getPluginPanelState()`; validate your manifest with
   `validatePluginManifest`. The framework's own tests under
   `packages/shared/src/plugins/__tests__/` show the patterns.
 - Full API reference: [AUTHORING.md](./AUTHORING.md).

@@ -16,11 +16,13 @@
  *   http(s) links are handed to the OS browser.
  */
 
+import { pathToFileURL } from 'url'
 import { app, ipcMain, session, shell, BrowserWindow } from 'electron'
 import { mainLog } from './logger'
 import {
   PluginRegistry,
-  loadExternalPlugins,
+  loadExternalPluginsDetailed,
+  resolvePluginEntryFile,
   loadPluginsConfig,
   isPluginEnabled,
   setPluginEnabled,
@@ -28,8 +30,10 @@ import {
   getPluginWebviewPartition,
   checkPluginApiCompatibility,
   PLUGIN_WEBVIEW_PARTITION_PREFIX,
+  type InvalidExternalPlugin,
   type LoadedPlugin,
   type PluginDisposable,
+  type PluginEntryPaths,
   type PluginInfo,
   type PluginManifest,
 } from '@craft-agent/shared/plugins/node'
@@ -52,6 +56,37 @@ type PluginIpcHandler = (args: unknown) => unknown | Promise<unknown>
 let registry: PluginRegistry | null = null
 let webviewEnabledAtStartup = false
 const pluginIpcHandlers = new Map<string, PluginIpcHandler>()
+
+/**
+ * External plugin directories that failed to load (bad/missing/mismatched
+ * manifest). Surfaced in Settings as errored rows with their reasons so an
+ * author sees *why* their plugin didn't appear, instead of it vanishing.
+ */
+let invalidExternalPlugins: InvalidExternalPlugin[] = []
+
+/** Absolute entry-file paths for valid external plugins, keyed by plugin id */
+const externalEntryPaths = new Map<string, PluginEntryPaths>()
+
+/**
+ * Load an external plugin's main-process entry module from disk. Split out so
+ * tests can stub it; the default dynamically imports the resolved file. A
+ * plugin's code runs in the main process only for `source: 'user'` plugins
+ * that declare `ipc` — this is trusted-installer territory (see SECURITY.md).
+ */
+let externalMainModuleLoader = async (absPath: string): Promise<{ activate?: ResolvedMainEntry }> => {
+  return (await import(pathToFileURL(absPath).href)) as { activate?: ResolvedMainEntry }
+}
+
+/** Test seam: override how external main modules are loaded */
+export function setExternalMainModuleLoader(
+  loader: (absPath: string) => Promise<{ activate?: ResolvedMainEntry }>,
+): void {
+  externalMainModuleLoader = loader
+}
+
+type ResolvedMainEntry = (
+  ctx: PluginMainContext,
+) => PluginDisposable | PluginDisposable[] | void | Promise<PluginDisposable | PluginDisposable[] | void>
 
 /**
  * Renderer-side failures reported per window (webContents id → plugin id →
@@ -84,14 +119,48 @@ function rendererErrorFor(pluginId: string): string | undefined {
   return undefined
 }
 
-/** Registry snapshot with per-window renderer failures merged in (S-M2) */
+/**
+ * A synthetic PluginInfo for an external directory that wouldn't load. The
+ * reason rides on `incompatibility` (like an unsupported apiVersion) so the
+ * Settings UI lists it with the reason and a permanently-disabled toggle —
+ * an invalid manifest is, like an incompatible one, something the host can
+ * never activate.
+ */
+function invalidPluginInfo(invalid: InvalidExternalPlugin): PluginInfo {
+  return {
+    id: invalid.id,
+    name: invalid.id,
+    version: '0.0.0',
+    permissions: [],
+    source: 'user',
+    enabled: false,
+    status: 'error',
+    incompatibility: `Invalid plugin: ${invalid.errors.join('; ')}`,
+    external: true,
+  }
+}
+
+/**
+ * Registry snapshot with per-window renderer failures merged in (S-M2),
+ * external entry paths attached (so the renderer can load their code), and
+ * invalid external directories appended as errored rows.
+ */
 function currentPluginInfo(): PluginInfo[] {
   const info = registry?.listInfo() ?? []
-  return info.map((plugin) => {
-    if (plugin.status === 'error') return plugin
+  const merged = info.map((plugin) => {
+    const entryPaths = externalEntryPaths.get(plugin.id)
+    const withEntry = entryPaths ? { ...plugin, entryPaths } : plugin
+    if (withEntry.status === 'error') return withEntry
     const rendererError = rendererErrorFor(plugin.id)
-    return rendererError ? { ...plugin, status: 'error' as const, error: rendererError } : plugin
+    return rendererError ? { ...withEntry, status: 'error' as const, error: rendererError } : withEntry
   })
+  // Append invalid external dirs that never made it into the registry, unless
+  // a valid plugin already claimed that id (built-ins win).
+  const known = new Set(merged.map((p) => p.id))
+  for (const invalid of invalidExternalPlugins) {
+    if (!known.has(invalid.id)) merged.push(invalidPluginInfo(invalid))
+  }
+  return merged
 }
 
 /** Resolve a webview partition back to its owning plugin id, or null */
@@ -135,45 +204,82 @@ function isAuthorizedWebviewPartition(partition: string | undefined): boolean {
   return !!entry && entry.enabled && manifestHasPermission(entry.manifest, 'ui.webview')
 }
 
+/** Roll back every disposable collected so far (reverse order), swallowing errors */
+function rollback(disposables: PluginDisposable[]): void {
+  for (const d of disposables.reverse()) {
+    try {
+      d.dispose()
+    } catch {
+      // best-effort teardown
+    }
+  }
+}
+
+/**
+ * Resolve a plugin's main-process entry: compiled-in for built-ins, loaded
+ * from disk for external plugins that declare a `main` entry file.
+ */
+async function resolveMainEntry(plugin: LoadedPlugin): Promise<ResolvedMainEntry | null> {
+  const builtin = MAIN_PLUGIN_ENTRIES[plugin.manifest.id]
+  if (builtin) return builtin
+  const abs = resolvePluginEntryFile(plugin, 'main')
+  if (!abs) return null
+  const mod = await externalMainModuleLoader(abs)
+  if (typeof mod.activate !== 'function') {
+    throw new Error(`main entry '${abs}' does not export an activate() function`)
+  }
+  return mod.activate
+}
+
 /** Main-side activation: wire IPC entries and lock down webview partitions */
-function activatePlugin(plugin: LoadedPlugin): PluginDisposable[] {
+async function activatePlugin(plugin: LoadedPlugin): Promise<PluginDisposable[]> {
   const disposables: PluginDisposable[] = []
   const { manifest } = plugin
 
-  if (manifestHasPermission(manifest, 'ui.webview')) {
-    // Deny-by-default permissions (camera, mic, geolocation, …) for any web
-    // content this plugin embeds.
-    const partition = getPluginWebviewPartition(manifest.id)
-    const ses = session.fromPartition(partition)
-    ses.setPermissionRequestHandler((_wc, permission, callback) => {
-      mainLog.info(`[plugins] denied permission '${permission}' for plugin '${manifest.id}'`)
-      callback(false)
-    })
-    disposables.push({
-      dispose: () => ses.setPermissionRequestHandler(null),
-    })
-  }
+  try {
+    if (manifestHasPermission(manifest, 'ui.webview')) {
+      // Deny-by-default permissions (camera, mic, geolocation, …) for any web
+      // content this plugin embeds.
+      const partition = getPluginWebviewPartition(manifest.id)
+      const ses = session.fromPartition(partition)
+      ses.setPermissionRequestHandler((_wc, permission, callback) => {
+        mainLog.info(`[plugins] denied permission '${permission}' for plugin '${manifest.id}'`)
+        callback(false)
+      })
+      disposables.push({
+        dispose: () => ses.setPermissionRequestHandler(null),
+      })
+    }
 
-  if (manifestHasPermission(manifest, 'ipc')) {
-    const entry = MAIN_PLUGIN_ENTRIES[manifest.id]
-    if (entry) {
-      const ctx: PluginMainContext = {
-        manifest,
-        log: (message) => mainLog.info(`[plugin:${manifest.id}] ${message}`),
-        handle: (channel, handler) => {
-          const key = ipcHandlerKey(manifest.id, channel)
-          if (pluginIpcHandlers.has(key)) {
-            throw new Error(`Plugin '${manifest.id}' already registered channel '${channel}'`)
-          }
-          pluginIpcHandlers.set(key, handler)
-          return { dispose: () => pluginIpcHandlers.delete(key) }
-        },
-      }
-      const result = entry(ctx)
-      if (result) {
-        disposables.push(...(Array.isArray(result) ? result : [result]))
+    if (manifestHasPermission(manifest, 'ipc')) {
+      const entry = await resolveMainEntry(plugin)
+      if (entry) {
+        const ctx: PluginMainContext = {
+          manifest,
+          log: (message) => mainLog.info(`[plugin:${manifest.id}] ${message}`),
+          // Auto-track every handler so a throw mid-activation rolls them back
+          // (a leaked handler would otherwise stay callable on an errored plugin).
+          handle: (channel, handler) => {
+            const key = ipcHandlerKey(manifest.id, channel)
+            if (pluginIpcHandlers.has(key)) {
+              throw new Error(`Plugin '${manifest.id}' already registered channel '${channel}'`)
+            }
+            pluginIpcHandlers.set(key, handler)
+            const disposable: PluginDisposable = { dispose: () => pluginIpcHandlers.delete(key) }
+            disposables.push(disposable)
+            return disposable
+          },
+        }
+        const result = await entry(ctx)
+        if (result) {
+          disposables.push(...(Array.isArray(result) ? result : [result]))
+        }
       }
     }
+  } catch (error) {
+    // Partial registrations must not survive a failed activation.
+    rollback(disposables)
+    throw error
   }
 
   return disposables
@@ -223,9 +329,23 @@ export async function initializePluginHost(): Promise<void> {
     const incompatibility = checkPluginApiCompatibility(manifest) ?? undefined
     registry.register(plugin, isPluginEnabled(manifest, config, 'builtin'), { incompatibility })
   }
-  for (const plugin of loadExternalPlugins()) {
+  const discovery = loadExternalPluginsDetailed()
+  invalidExternalPlugins = discovery.invalid
+  externalEntryPaths.clear()
+  for (const plugin of discovery.plugins) {
     const incompatibility = checkPluginApiCompatibility(plugin.manifest) ?? undefined
     registry.register(plugin, isPluginEnabled(plugin.manifest, config, 'user'), { incompatibility })
+    // Resolve the plugin's entry files once so the renderer can load its code
+    // (and the main entry loader can find it) without re-touching the manifest.
+    const renderer = resolvePluginEntryFile(plugin, 'renderer') ?? undefined
+    const main = resolvePluginEntryFile(plugin, 'main') ?? undefined
+    if (renderer || main) externalEntryPaths.set(plugin.manifest.id, { renderer, main })
+  }
+  if (discovery.invalid.length > 0) {
+    mainLog.warn(
+      `[plugins] ${discovery.invalid.length} external plugin(s) failed to load: ` +
+      discovery.invalid.map((i) => `${i.id} (${i.errors[0] ?? 'invalid'})`).join(', '),
+    )
   }
 
   await registry.activateEnabled()
@@ -284,7 +404,9 @@ function registerPluginIpc(): void {
       throw new Error('Invalid plugin invoke request')
     }
     const entry = registry.get(pluginId)
-    if (!entry || !entry.enabled) {
+    // Require an *active* runtime, not merely enabled — a plugin that errored
+    // during activation must not expose any handler that leaked before the throw.
+    if (!entry || !entry.enabled || entry.status !== 'active') {
       throw new Error(`Plugin not available: ${pluginId}`)
     }
     if (!manifestHasPermission(entry.manifest, 'ipc')) {

@@ -285,9 +285,10 @@ interface PluginContext {
 7. **Registry & settings surface** — Settings → Plugins lists every discovered
    plugin (built-in and external) with permissions, declared contributions
    (panels, commands + keybindings), and an enable/disable switch; changes
-   broadcast to all windows (`__plugins:changed`). External plugins are
-   labelled manifest-only; incompatible plugins show their reason with the
-   toggle disabled.
+   broadcast to all windows (`__plugins:changed`). External plugins load
+   their code from disk and are enabled behind a trust-consent prompt;
+   incompatible or invalid plugins show their reason with the toggle disabled.
+   See [INSTALL.md](./INSTALL.md).
 
 ## How core stays decoupled
 
@@ -309,11 +310,30 @@ Everything else is new files. With the registration maps empty
 the app is pixel-identical to vanilla; removing a bundled plugin's directory
 plus its registration lines removes it completely.
 
+## External code loading (shipped)
+
+External plugins now load their code from disk — the renderer entry
+(`entries.renderer`) via a dynamic `import()` in the renderer runtime, the
+main entry (`entries.main`) via a dynamic `import()` in the main host — behind
+an injectable module-loader seam (`setExternalRendererModuleLoader` /
+`setExternalMainModuleLoader`) so the registration/activation path is unit
+tested headlessly. Entry files are resolved once by the main host
+(`resolvePluginEntryFile`, which refuses paths escaping the plugin directory)
+and their absolute paths ride to the renderer on `PluginInfo.entryPaths`.
+Authors need no bundler: `ctx.react` hands the plugin the host's React so a
+plain `.mjs` can build components without JSX or a `react` import. Enabling an
+external plugin runs third-party in-process code, so Settings gates it behind
+a permission-surfacing trust prompt (the editor/Obsidian model — the framework
+checks, the installer decides). This is the v1 "add a plugin easily" path; it
+is **not** a sandbox for untrusted code (see below and SECURITY.md).
+
 ## Future work (explicitly out of scope for v1)
 
-- Loading external plugin *code* (the manifest/discovery/enable machinery
-  already treats plugins as data; code loading needs a vetted module pipeline —
-  signed bundles or a custom protocol — and likely renderer-process isolation).
+- **Isolated loading of *untrusted* external code** (an out-of-realm extension
+  host, signed/verified bundles). v1 loads external code in-process as
+  trusted-by-install code; running code you *don't* trust safely needs
+  process/realm isolation. A manifest `repository`/`sourceUrl` back-reference
+  (so an installed plugin links to its source) belongs here too.
 - Workspace-scoped plugin enablement (per-workspace overrides of the app-level
   state, like themes).
 - Event-bus subscriptions (`SessionStart`/`PostToolUse`…): the

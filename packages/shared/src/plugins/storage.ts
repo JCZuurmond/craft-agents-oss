@@ -12,11 +12,13 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import { join, resolve, sep } from 'path';
 import { atomicWriteFileSync, safeJsonParse } from '../utils/files.ts';
 import { validatePluginManifest } from './validation.ts';
 import {
   PLUGINS_CONFIG_VERSION,
+  type ExternalPluginDiscovery,
+  type InvalidExternalPlugin,
   type LoadedPlugin,
   type PluginManifest,
   type PluginsConfig,
@@ -46,51 +48,121 @@ export function getPluginsConfigPath(configDir?: string): string {
 // ============================================================
 
 /**
+ * One external plugin directory's load outcome:
+ * - `{ plugin }`  — a valid, loadable plugin
+ * - `{ invalid }` — a directory with a manifest that failed to load/validate
+ * - `null`        — not a plugin directory at all (no manifest present)
+ */
+type ExternalPluginLoad =
+  | { plugin: LoadedPlugin; invalid?: undefined }
+  | { plugin?: undefined; invalid: InvalidExternalPlugin }
+  | null;
+
+/**
+ * Load a single external plugin directory, distinguishing "valid",
+ * "present-but-invalid", and "not a plugin dir". `id` is the directory name.
+ */
+function loadExternalPluginDetailed(pluginsDir: string, id: string): ExternalPluginLoad {
+  const pluginDir = join(pluginsDir, id);
+  const manifestPath = join(pluginDir, PLUGIN_MANIFEST_FILE);
+
+  if (!existsSync(pluginDir) || !statSync(pluginDir).isDirectory()) return null;
+  // No manifest at all → this isn't a plugin directory; don't report it.
+  if (!existsSync(manifestPath)) return null;
+
+  const invalid = (errors: string[]): ExternalPluginLoad => ({
+    invalid: { id, path: pluginDir, errors },
+  });
+
+  let raw: unknown;
+  try {
+    raw = safeJsonParse(readFileSync(manifestPath, 'utf-8'));
+  } catch (error) {
+    return invalid([`${PLUGIN_MANIFEST_FILE} is not readable or valid JSON: ${String(error)}`]);
+  }
+
+  const result = validatePluginManifest(raw);
+  if (!result.valid || !result.manifest) {
+    return invalid(result.errors.length > 0 ? result.errors : ['manifest failed validation']);
+  }
+  // The directory name is the plugin's identity on disk; a mismatched id would
+  // let one plugin masquerade as another (or shadow a built-in).
+  if (result.manifest.id !== id) {
+    return invalid([
+      `manifest id '${result.manifest.id}' must match its directory name '${id}'`,
+    ]);
+  }
+
+  return { plugin: { manifest: result.manifest, source: 'user', path: pluginDir } };
+}
+
+/**
  * Load a single external plugin from {pluginsDir}/{id}/.
  * Returns null when the directory has no parseable, valid manifest or the
  * manifest id doesn't match its directory name (prevents id spoofing).
  */
 export function loadExternalPlugin(pluginsDir: string, id: string): LoadedPlugin | null {
-  const pluginDir = join(pluginsDir, id);
-  const manifestPath = join(pluginDir, PLUGIN_MANIFEST_FILE);
-
-  if (!existsSync(pluginDir) || !statSync(pluginDir).isDirectory()) return null;
-  if (!existsSync(manifestPath)) return null;
-
-  let raw: unknown;
-  try {
-    raw = safeJsonParse(readFileSync(manifestPath, 'utf-8'));
-  } catch {
-    return null;
-  }
-
-  const result = validatePluginManifest(raw);
-  if (!result.valid || !result.manifest) return null;
-  if (result.manifest.id !== id) return null;
-
-  return { manifest: result.manifest, source: 'user', path: pluginDir };
+  return loadExternalPluginDetailed(pluginsDir, id)?.plugin ?? null;
 }
 
 /**
- * Discover all external plugins under {configDir}/plugins/.
- * Invalid or unparseable plugins are skipped silently, matching how
- * sources/skills tolerate broken directories.
+ * Discover all external plugins under {configDir}/plugins/, keeping both the
+ * valid plugins and the directories whose manifest failed to load. Invalid
+ * entries carry human-readable reasons so the host can surface them in
+ * Settings instead of dropping them silently.
  */
-export function loadExternalPlugins(configDir?: string): LoadedPlugin[] {
+export function loadExternalPluginsDetailed(configDir?: string): ExternalPluginDiscovery {
   const pluginsDir = getPluginsDir(configDir);
-  if (!existsSync(pluginsDir)) return [];
+  if (!existsSync(pluginsDir)) return { plugins: [], invalid: [] };
 
   const plugins: LoadedPlugin[] = [];
+  const invalid: InvalidExternalPlugin[] = [];
   try {
     for (const entry of readdirSync(pluginsDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
-      const plugin = loadExternalPlugin(pluginsDir, entry.name);
-      if (plugin) plugins.push(plugin);
+      const loaded = loadExternalPluginDetailed(pluginsDir, entry.name);
+      if (!loaded) continue;
+      if (loaded.plugin) plugins.push(loaded.plugin);
+      else invalid.push(loaded.invalid);
     }
   } catch {
-    // Ignore errors reading the plugins directory
+    // Ignore errors reading the plugins directory itself
   }
-  return plugins;
+  return { plugins, invalid };
+}
+
+/**
+ * Discover all valid external plugins under {configDir}/plugins/.
+ * (Thin wrapper over loadExternalPluginsDetailed for callers that don't need
+ * the invalid list.)
+ */
+export function loadExternalPlugins(configDir?: string): LoadedPlugin[] {
+  return loadExternalPluginsDetailed(configDir).plugins;
+}
+
+/**
+ * Resolve an external plugin's entry file to an absolute path, guarding
+ * against path escapes — a manifest entry like `../../evil.js` is refused so
+ * a plugin can only load code from inside its own directory. Returns null
+ * when the plugin declares no such entry, the entry escapes the plugin
+ * directory, or the target file does not exist.
+ *
+ * Built-in plugins have their code compiled in and always resolve to null.
+ */
+export function resolvePluginEntryFile(
+  plugin: LoadedPlugin,
+  which: 'renderer' | 'main',
+): string | null {
+  if (plugin.source !== 'user' || !plugin.path) return null;
+  const rel = plugin.manifest.entries?.[which];
+  if (!rel) return null;
+
+  const root = resolve(plugin.path);
+  const abs = resolve(root, rel);
+  // Must stay within the plugin directory (defends against '../' traversal).
+  if (abs !== root && !abs.startsWith(root + sep)) return null;
+  if (!existsSync(abs) || !statSync(abs).isFile()) return null;
+  return abs;
 }
 
 // ============================================================
