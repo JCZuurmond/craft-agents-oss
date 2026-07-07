@@ -1,0 +1,85 @@
+output: ../../../../../../docs/plugins/focus-timer/demo/focus-timer-demo.webm
+# The plugin ships defaultEnabled: false — ?enable seeds the user's Settings
+# opt-in. ?seed.{key} seeds the plugin's scoped ctx.storage namespace: a
+# 0.15-minute (9s) focus duration so a full session completes on camera.
+url: "http://127.0.0.1:5199/?enable=focus-timer&seed.craft-plugin-focus-timer%3Aduration-minutes=0.15"
+server: exec node ../../../../../../node_modules/vite/bin/vite.js --host 127.0.0.1 --config vite.config.ts
+
+viewport:
+  width: 1280
+  height: 800
+
+cursor:
+  visible: true
+  clicks: true
+  color: "#8b5cf6"
+  size: 16
+  click_size: 42
+
+wait_for: '[data-panel-role="plugin-rail"][data-panel-location="top"] button[aria-label="Focus Timer"]'
+
+scenes:
+  - name: Declared contribution on the top edge
+    do:
+      - js: |
+          window.__pluginDemo?.setCaption(
+            'The Focus Timer contributes this top-edge rail toggle and a mod+shift+f keybinding from manifest data alone.'
+          );
+      - pause: 2.5
+      - screenshot: ../../../../../../docs/plugins/focus-timer/demo/01-declared-rail.png
+
+  - name: Keybinding lazy-activates the plugin
+    do:
+      - js: |
+          document.body.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'f', ctrlKey: true, shiftKey: true, bubbles: true,
+          }));
+      - wait_for: '[data-testid="focus-timer-time"][data-phase="running"]'
+      - js: |
+          window.__pluginDemo?.setCaption(
+            'mod+shift+f executes the declared toggle command: the host activates the plugin (onCommand:toggle), opens the top dock, and starts the session.'
+          );
+      - pause: 2.5
+      - screenshot: ../../../../../../docs/plugins/focus-timer/demo/02-keybinding-activation.png
+
+  - name: Same command pauses from the keybinding
+    do:
+      - js: |
+          document.body.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'f', ctrlKey: true, shiftKey: true, bubbles: true,
+          }));
+      - wait_for: '[data-testid="focus-timer-time"][data-phase="paused"]'
+      - js: |
+          window.__pluginDemo?.setCaption('The same chord pauses — command handlers drive exactly what the buttons drive. Core shortcuts always win over plugin chords.');
+      - pause: 2.2
+      - screenshot: ../../../../../../docs/plugins/focus-timer/demo/03-paused.png
+
+  - name: A session completes on camera
+    do:
+      - click: 'button[aria-label="Start"]'
+      - wait_for: '[data-testid="focus-timer-time"][data-phase="done"]'
+      - js: |
+          window.__pluginDemo?.setCaption(
+            'The seeded 9-second session runs out: the completed count increments and persists through scoped ctx.storage.'
+          );
+      - pause: 2.5
+      - screenshot: ../../../../../../docs/plugins/focus-timer/demo/04-complete.png
+
+  - name: Presets persist the preferred duration
+    do:
+      - click: 'button[aria-label="Focus for 25 minutes"]'
+      - wait_for: 'text=25:00'
+      - js: |
+          window.__pluginDemo?.setCaption('Duration presets write the preference to plugin storage — the next session starts from 25:00.');
+      - pause: 2.2
+      - click: 'button[aria-label="Start"]'
+      - pause: 1.8
+      - screenshot: ../../../../../../docs/plugins/focus-timer/demo/05-presets.png
+
+  - name: Closing card
+    do:
+      - js: |
+          window.__pluginDemo?.setCaption('Built entirely on the public PluginContext — declared commands, keybinding, storage, and a top-edge dock.');
+      - pause: 2.6
+      - js: window.__pluginDemo?.setCaption('');
+      - pause: 0.4
