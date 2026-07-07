@@ -1,0 +1,137 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #fbf7f2;
+  color: #251f1a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(136, 96, 255, 0.18), transparent 34rem),
+    linear-gradient(135deg, #fffaf2, #f4edf9);
+}
+
+nav {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 28px;
+  border-bottom: 1px solid rgba(60, 45, 35, 0.12);
+  background: rgba(255, 252, 247, 0.74);
+  backdrop-filter: blur(18px);
+}
+
+nav strong {
+  margin-right: auto;
+}
+
+nav a {
+  color: #6d5a4a;
+  text-decoration: none;
+  font-size: 14px;
+}
+
+main {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 72px 40px;
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  color: #7c55d9;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+h1 {
+  margin: 0 0 18px;
+  font-size: clamp(42px, 7vw, 72px);
+  line-height: 0.95;
+  letter-spacing: -0.05em;
+}
+
+h2 {
+  margin-top: 34px;
+  font-size: 22px;
+}
+
+p {
+  max-width: 680px;
+  font-size: 19px;
+  line-height: 1.55;
+  color: #5b4f46;
+}
+
+code {
+  padding: 0.12em 0.32em;
+  border-radius: 6px;
+  background: rgba(40, 30, 20, 0.08);
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 42px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 22px;
+  min-height: 150px;
+  border-radius: 22px;
+  text-decoration: none;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.68);
+  box-shadow: 0 18px 52px rgba(58, 45, 35, 0.12);
+  border: 1px solid rgba(70, 54, 40, 0.1);
+}
+
+.card span {
+  font-weight: 700;
+  font-size: 18px;
+}
+
+.card small {
+  color: #6d5a4a;
+  line-height: 1.45;
+}
+
+.feature-list {
+  display: grid;
+  gap: 14px;
+  padding: 0;
+  margin: 42px 0 0;
+  list-style: none;
+}
+
+.feature-list li {
+  display: flex;
+  gap: 18px;
+  align-items: baseline;
+  padding: 18px 20px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(70, 54, 40, 0.1);
+}
+
+.feature-list strong {
+  width: 150px;
+  flex: 0 0 auto;
+}
+
+.feature-list span {
+  color: #5b4f46;
+}

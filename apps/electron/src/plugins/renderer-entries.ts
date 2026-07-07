@@ -7,5 +7,8 @@
  */
 
 import type { PluginRendererEntry } from '../renderer/plugins/types'
+import { activate as activateWebBrowser } from './web-browser/renderer'
 
-export const RENDERER_PLUGIN_ENTRIES: Record<string, PluginRendererEntry> = {}
+export const RENDERER_PLUGIN_ENTRIES: Record<string, PluginRendererEntry> = {
+  'web-browser': activateWebBrowser,
+}
