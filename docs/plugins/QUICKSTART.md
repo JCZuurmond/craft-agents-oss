@@ -100,7 +100,7 @@ bun run electron:dev
 ```
 
 A 👋 icon appears in the toggle rail on the right edge of the window — click
-it to open your pane (that first click is what activates the plugin).
+it to open your panel (that first click is what activates the plugin).
 **Settings → Plugins** now lists "Hello Pane" with its permissions and
 declared panel and an enable/disable toggle; toggling deactivates/reactivates
 it live in every open window.
