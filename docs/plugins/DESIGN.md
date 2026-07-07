@@ -99,8 +99,10 @@ main-only). The split exists because manifests are plain data consumed by both
 processes while entries must never leak React into main or Node into the
 renderer. The loader additionally discovers **external manifests** under
 `~/.craft-agent/plugins/<id>/plugin.json` so the
-registry/settings/enable-disable machinery already treats plugins as data;
-loading external *code* is future work (see "Future work").
+registry/settings/enable-disable machinery treats plugins as data. External
+*code* loading has since shipped on top of that seam — a dynamic `import()`
+of on-disk entry files in each host; see "External code loading (shipped)"
+below. Built-in plugins remain compiled in.
 
 ## Phase 2 — Design
 
@@ -175,7 +177,7 @@ Settings → Plugins:
 | `ui.webview` | embed remote web content in a hardened `<webview>` (dedicated `persist:craft-plugin-<id>` partition); a sub-capability of a side panel, listed as a permission because it changes the window-level security posture |
 | `commands` | register handlers for declared commands (with their keybindings) and execute commands through the host registry |
 | `storage` | persistent key-value storage scoped to the plugin |
-| `ipc` | invoke main-process handlers registered for this plugin (namespaced `plugin:<id>:<channel>`) |
+| `ipc` | invoke main-process handlers registered for this plugin (namespaced per plugin behind the `__plugins:invoke` bridge) |
 
 No sanctioned `PluginContext` surface exposes credentials, app config,
 sessions, or Node APIs. Undeclared capability access throws. See
@@ -205,8 +207,8 @@ documented-but-unbuilt so v1 stays small while the names stay stable.
   `config.json`/`preferences.json`). Toggling is live: the renderer host
   activates/deactivates without an app restart (matching the app's "no
   restart" ethos). The `ui.webview` *window flag* is computed at window
-  creation; enabling a webview plugin for the first time asks for a window
-  reload.
+  creation; enabling a webview plugin for the first time offers an app
+  relaunch.
 - Activation: `activate(ctx)` returns an optional disposable; every
   registration made through `ctx` is tracked and auto-disposed on deactivate.
   A throwing plugin is marked `status: 'error'` and never takes the host down.
@@ -231,7 +233,7 @@ interface PluginContext {
   ui: { registerSidePanel(c): Disposable; openSidePanel(id); closeSidePanel(id) } // 'ui.sidePanel'
   commands: { register(id, handler): Disposable; execute(qualifiedId, args?): Promise<unknown> } // 'commands'
   hooks: { on(hook, listener): Disposable } // framework lifecycle hooks (no permission)
-  invoke(channel, args): Promise<unknown> // 'ipc' → plugin:<id>:<channel> in main
+  invoke(channel, args): Promise<unknown> // 'ipc' → this plugin's main-process handlers
   webviewPartition: string                // 'ui.webview' → persist:craft-plugin-<id>
 }
 ```
