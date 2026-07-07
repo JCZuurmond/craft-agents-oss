@@ -141,9 +141,9 @@ function invalidPluginInfo(invalid: InvalidExternalPlugin): PluginInfo {
 }
 
 /**
- * Registry snapshot with per-window renderer failures merged in (S-M2),
- * external entry paths attached (so the renderer can load their code), and
- * invalid external directories appended as errored rows.
+ * Registry snapshot with per-window renderer failures merged in, external
+ * entry paths attached (so the renderer can load their code), and invalid
+ * external directories appended as errored rows.
  */
 function currentPluginInfo(): PluginInfo[] {
   const info = registry?.listInfo() ?? []
@@ -323,7 +323,7 @@ export async function initializePluginHost(): Promise<void> {
 
   // Built-ins first — an external plugin can never shadow a built-in id.
   // Plugins targeting an unsupported apiVersion register as permanently
-  // errored: listed in Settings with the reason, never activated (M3).
+  // errored: listed in Settings with the reason, never activated.
   for (const manifest of BUILTIN_PLUGIN_MANIFESTS) {
     const plugin: LoadedPlugin = { manifest, source: 'builtin' }
     const incompatibility = checkPluginApiCompatibility(manifest) ?? undefined
@@ -388,7 +388,7 @@ function registerPluginIpc(): void {
 
       // webviewTag is fixed per BrowserWindow at creation — if the effective
       // flag drifted from what windows were created with, a relaunch is needed
-      // for webview panes to (dis)appear.
+      // for webview panels to (dis)appear.
       const requiresRelaunch =
         manifestHasPermission(entry.manifest, 'ui.webview') &&
         isPluginWebviewEnabled() !== webviewEnabledAtStartup
