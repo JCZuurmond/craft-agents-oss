@@ -26,7 +26,8 @@
  *                   and execute commands through the host command registry
  * - `storage`     — persistent key-value storage scoped to the plugin
  * - `ipc`         — invoke main-process handlers registered for this plugin
- *                   (channels namespaced `plugin:{id}:{channel}`)
+ *                   (handlers are keyed per plugin; the renderer reaches them
+ *                   through the host's single `__plugins:invoke` bridge)
  *
  * Reserved (documented, intentionally not implemented yet — see
  * docs/plugins/DESIGN.md): `events.read` for a read-only client mirror of the
@@ -158,7 +159,7 @@ export interface PluginCommandDeclaration {
  * field. See docs/plugins/DESIGN.md before adding any of them.
  */
 export interface PluginContributions {
-  /** Side panels rendered by the plugin pane hosts (requires 'ui.sidePanel') */
+  /** Side panels rendered by the plugin panel docks (requires 'ui.sidePanel') */
   sidePanels?: PluginSidePanelDeclaration[];
   /** User-invocable commands with optional keybindings (requires 'commands') */
   commands?: PluginCommandDeclaration[];
@@ -190,6 +191,12 @@ export function qualifiedCommandId(pluginId: string, commandId: string): string 
  * (as if `onPanel:` were listed for each), plugins with declared commands are
  * lazy on those commands, and plugins with no declarative contributions
  * activate at startup (their contributions exist only in code).
+ *
+ * v1 hosts use an explicit list only to decide startup eagerness (`onStartup`
+ * present or not): a lazy plugin is activated by the first use of *any* of
+ * its declared panels/commands, whether or not that specific id is listed.
+ * The per-id events are validated against the declared contributions and
+ * document intent; they do not narrow the activation triggers.
  */
 export type PluginActivationEvent =
   | 'onStartup'
