@@ -24,7 +24,7 @@ export interface PluginHostHookMap {
   'plugin:deactivated': { pluginId: string }
   /** A plugin panel became the open panel on its edge */
   'panel:opened': { pluginId: string; panelId: string; location: PluginPanelLocation }
-  /** An edge's plugin pane was closed */
+  /** An edge's plugin dock was closed */
   'panel:closed': { pluginId: string; panelId: string; location: PluginPanelLocation }
   /** A plugin command was executed (keybinding or ctx.commands.execute) */
   'command:executed': { pluginId: string; commandId: string }
