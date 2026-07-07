@@ -5,6 +5,7 @@
  * entry, and tracks every registration so deactivation can dispose them all.
  */
 
+import * as React from 'react'
 import {
   manifestHasPermission,
   getPluginWebviewPartition,
@@ -119,6 +120,7 @@ export function createPluginContext(manifest: PluginManifest): CreatedPluginCont
 
   const ctx: PluginContext = {
     manifest,
+    react: React,
     logger: createLogger(pluginId),
     storage,
     ui,
