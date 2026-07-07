@@ -6,6 +6,7 @@
  * declare throws at call time (fail fast, visible in the plugin's status).
  */
 
+import type * as React from 'react'
 import type { ComponentType } from 'react'
 import type { PluginDisposable, PluginManifest, PluginPanelLocation } from '@craft-agent/shared/plugins/types'
 import type { PluginCommandHandler } from '@craft-agent/shared/plugins/commands'
@@ -93,6 +94,14 @@ export interface PluginHooks {
 /** Context handed to a plugin's renderer `activate()` */
 export interface PluginContext {
   manifest: PluginManifest
+  /**
+   * The host's React instance. External plugins (loaded from disk without a
+   * build step) build components with `ctx.react.createElement` / hooks
+   * instead of `import 'react'`, so they share the host's single React copy
+   * (importing their own would break hooks). Built-in, in-tree plugins can
+   * keep importing React directly and use JSX.
+   */
+  react: typeof React
   logger: PluginLogger
   /** Scoped storage (requires 'storage') */
   storage: PluginStorage
