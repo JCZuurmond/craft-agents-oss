@@ -13,5 +13,8 @@
  */
 
 import type { PluginManifest } from '@craft-agent/shared/plugins/types'
+import { WEB_BROWSER_PLUGIN_MANIFEST } from './web-browser/manifest'
 
-export const BUILTIN_PLUGIN_MANIFESTS: PluginManifest[] = []
+export const BUILTIN_PLUGIN_MANIFESTS: PluginManifest[] = [
+  WEB_BROWSER_PLUGIN_MANIFEST,
+]

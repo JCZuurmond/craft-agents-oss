@@ -1,0 +1,151 @@
+output: ../../../../../../docs/plugins/web-browser/demo/browser-pane-demo.webm
+# The plugin ships defaultEnabled: false — ?enable seeds the user's Settings
+# opt-in; ?seed.{key} starts the pane on the demo site by seeding the plugin's
+# scoped ctx.storage namespace, exactly as a previous session would.
+url: "http://127.0.0.1:5199/?enable=web-browser&seed.craft-plugin-web-browser%3Alast-url=%22http%3A%2F%2F127.0.0.1%3A5199%2Fdemo-site%2Findex.html%22"
+server: exec node ../../../../../../node_modules/vite/bin/vite.js --host 127.0.0.1 --config vite.config.ts
+
+viewport:
+  width: 1280
+  height: 800
+
+cursor:
+  visible: true
+  clicks: true
+  color: "#8b5cf6"
+  size: 16
+  click_size: 42
+
+wait_for: '[data-panel-role="plugin-rail"] button[aria-label="Browser Pane"]'
+
+scenes:
+  - name: Declared contribution
+    do:
+      - js: |
+          window.__pluginDemo?.setCaption(
+            'The Browser Pane contributes this rail toggle from manifest data — no plugin code has loaded yet.'
+          );
+      - pause: 2.5
+      - screenshot: ../../../../../../docs/plugins/web-browser/demo/01-declared-rail.png
+
+  - name: Lazy activation on first open
+    do:
+      - click: '[data-panel-role="plugin-rail"] button[aria-label="Browser Pane"]'
+      - wait_for: 'demo-webview[data-loaded-url$="/index.html"]'
+      - js: |
+          window.__pluginDemo?.setCaption(
+            'First open activates the plugin with onPanel:browser and mounts the real Browser Pane component.'
+          );
+      - pause: 2.5
+      - screenshot: ../../../../../../docs/plugins/web-browser/demo/02-lazy-activation.png
+
+  - name: Navigation and address bar
+    do:
+      - js: |
+          document
+            .querySelector('demo-webview iframe')
+            ?.contentDocument
+            ?.querySelector('a[href="/demo-site/docs.html"]')
+            ?.click();
+      - wait_for: 'demo-webview[data-loaded-url$="/docs.html"]'
+      - js: |
+          window.__pluginDemo?.setCaption(
+            'Navigation runs inside the plugin render surface; Electron swaps this shim for the hardened sandboxed <webview>.'
+          );
+      - pause: 1.8
+      - click: 'input[aria-label="Address"]'
+      - fill:
+          into: 'input[aria-label="Address"]'
+          text: 'http://127.0.0.1:5199/demo-site/features.html'
+      - press:
+          selector: 'input[aria-label="Address"]'
+          key: Enter
+      - wait_for: 'demo-webview[data-loaded-url$="/features.html"]'
+      - js: |
+          window.__pluginDemo?.setCaption('The address bar normalizes input, drives loading state, and records history.');
+      - pause: 2
+      - screenshot: ../../../../../../docs/plugins/web-browser/demo/03-navigation.png
+
+  - name: History controls
+    do:
+      - click: 'button[aria-label="Back"]'
+      - wait_for: 'demo-webview[data-loaded-url$="/docs.html"]'
+      - pause: 0.6
+      - click: 'button[aria-label="Back"]'
+      - wait_for: 'demo-webview[data-loaded-url$="/index.html"]'
+      - pause: 0.6
+      - click: 'button[aria-label="Forward"]'
+      - wait_for: 'demo-webview[data-loaded-url$="/docs.html"]'
+      - js: |
+          window.__pluginDemo?.setCaption('Back and forward are just the webview history API exposed through the plugin UI.');
+      - pause: 2
+
+  - name: Failure state
+    do:
+      - click: 'input[aria-label="Address"]'
+      - fill:
+          into: 'input[aria-label="Address"]'
+          text: 'http://127.0.0.1:9/unreachable'
+      - press:
+          selector: 'input[aria-label="Address"]'
+          key: Enter
+      - wait_for: 'text=This page failed to load'
+      - wait_for: 'demo-webview[data-error]'
+      - js: |
+          window.__pluginDemo?.setCaption('Unreachable pages get an in-pane failure state with retry.');
+      - pause: 2.5
+      - screenshot: ../../../../../../docs/plugins/web-browser/demo/04-failure-state.png
+
+  - name: Live disable from Settings
+    do:
+      - click: 'input[aria-label="Address"]'
+      - fill:
+          into: 'input[aria-label="Address"]'
+          text: 'http://127.0.0.1:5199/demo-site/docs.html'
+      - press:
+          selector: 'input[aria-label="Address"]'
+          key: Enter
+      - wait_for: 'demo-webview[data-loaded-url$="/docs.html"]'
+      - js: window.__pluginDemo?.openSettings(true);
+      - wait_for: '[data-testid="demo-settings"]'
+      - click: '[data-testid="demo-settings"] button[role="switch"]'
+      - pause: 1
+      - js: |
+          window.__pluginDemo?.setCaption(
+            'Disabling the plugin in Settings disposes every contribution live — pane, rail, and storage handles.'
+          );
+      - pause: 2.5
+      - screenshot: ../../../../../../docs/plugins/web-browser/demo/05-live-disable.png
+
+  - name: Re-enable and restore from scoped storage
+    do:
+      - click: '[data-testid="demo-settings"] button[role="switch"]'
+      - wait_for: '[data-panel-role="plugin-rail"] button[aria-label="Browser Pane"]'
+      - js: window.__pluginDemo?.openSettings(false);
+      - click: '[data-panel-role="plugin-rail"] button[aria-label="Browser Pane"]'
+      - wait_for: 'demo-webview[data-loaded-url$="/docs.html"]'
+      - js: |
+          window.__pluginDemo?.setCaption(
+            'Re-enabled: the pane restores its last URL from the plugin’s scoped ctx.storage.'
+          );
+      - pause: 2.5
+      - screenshot: ../../../../../../docs/plugins/web-browser/demo/06-storage-persistence.png
+
+  - name: Any edge, same framework
+    do:
+      - js: window.__pluginDemo?.showEdgePanels();
+      - wait_for: '[data-panel-role="plugin-dock"][data-panel-location="bottom"]'
+      - js: |
+          window.__pluginDemo?.setCaption(
+            'The dock generalizes: another plugin can contribute panels to any shell edge — left, right, top, or bottom.'
+          );
+      - pause: 2.8
+      - screenshot: ../../../../../../docs/plugins/web-browser/demo/07-any-edge.png
+
+  - name: Closing card
+    do:
+      - js: |
+          window.__pluginDemo?.setCaption('Built entirely on the public PluginContext — zero core browser-pane special-casing.');
+      - pause: 2.6
+      - js: window.__pluginDemo?.setCaption('');
+      - pause: 0.4
