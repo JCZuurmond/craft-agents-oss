@@ -27,11 +27,14 @@ import {
   shouldActivateOnStartup,
   type LoadedPlugin,
   type PluginDisposable,
+  type PluginEntryPaths,
+  type PluginInfo,
   type PluginManifest,
 } from '@craft-agent/shared/plugins/types'
 import { BUILTIN_PLUGIN_MANIFESTS } from '../../plugins/manifests'
 import { RENDERER_PLUGIN_ENTRIES } from '../../plugins/renderer-entries'
 import { createPluginContext } from './context'
+import type { PluginRendererEntry } from './types'
 import {
   getPluginPanelState,
   subscribePluginPanels,
@@ -54,6 +57,67 @@ let initializePromise: Promise<void> | null = null
 const pendingActivations = new Map<string, Promise<boolean>>()
 /** Last renderer status pushed to main per plugin (null = healthy) */
 const lastReportedError = new Map<string, string | null>()
+/** Resolved entry-file paths for external plugins (from main), keyed by id */
+const externalEntryPaths = new Map<string, PluginEntryPaths>()
+
+/**
+ * Load an external plugin's renderer entry module from disk. Split out as a
+ * test seam; the default dynamically imports the (main-resolved) entry file.
+ * External plugin code runs in the same renderer realm as the app — trusted,
+ * first-party-by-install code (see SECURITY.md); this is the one runtime step
+ * that requires a real Electron renderer to exercise end-to-end.
+ */
+let externalRendererModuleLoader = async (
+  entryPath: string,
+): Promise<{ activate?: PluginRendererEntry }> => {
+  const url = entryPath.startsWith('file:') ? entryPath : `file://${entryPath}`
+  return (await import(/* @vite-ignore */ url)) as { activate?: PluginRendererEntry }
+}
+
+/** Test seam: override how external renderer modules are loaded */
+export function setExternalRendererModuleLoader(
+  loader: (entryPath: string) => Promise<{ activate?: PluginRendererEntry }>,
+): void {
+  externalRendererModuleLoader = loader
+}
+
+/** Reconstruct a manifest from the IPC snapshot for an external plugin */
+function manifestFromInfo(info: PluginInfo): PluginManifest {
+  return {
+    id: info.id,
+    name: info.name,
+    version: info.version,
+    description: info.description,
+    icon: info.icon,
+    permissions: info.permissions,
+    apiVersion: info.apiVersion,
+    contributes: info.contributes,
+    activationEvents: info.activationEvents,
+  }
+}
+
+/** Keep the external entry-path map in sync with the latest IPC snapshot */
+function syncExternalEntryPaths(infos: PluginInfo[]): void {
+  for (const info of infos) {
+    if (info.entryPaths) externalEntryPaths.set(info.id, info.entryPaths)
+  }
+}
+
+/**
+ * Resolve a plugin's renderer entry: compiled-in for built-ins, dynamically
+ * imported from disk for external plugins that ship a `renderer` entry file.
+ */
+async function resolveRendererEntry(plugin: LoadedPlugin): Promise<PluginRendererEntry | null> {
+  const builtin = RENDERER_PLUGIN_ENTRIES[plugin.manifest.id]
+  if (builtin) return builtin
+  const entryPath = externalEntryPaths.get(plugin.manifest.id)?.renderer
+  if (!entryPath) return null
+  const mod = await externalRendererModuleLoader(entryPath)
+  if (typeof mod.activate !== 'function') {
+    throw new Error(`renderer entry '${entryPath}' does not export an activate() function`)
+  }
+  return mod.activate
+}
 
 function declaredPanels(manifest: PluginManifest) {
   return manifest.contributes?.sidePanels ?? []
@@ -68,14 +132,14 @@ function hasDeclarativeContributions(manifest: PluginManifest): boolean {
   return declaredPanels(manifest).length > 0 || declaredCommands(manifest).length > 0
 }
 
-function activateRendererPlugin(plugin: LoadedPlugin): PluginDisposable[] {
+async function activateRendererPlugin(plugin: LoadedPlugin): Promise<PluginDisposable[]> {
   const pluginId = plugin.manifest.id
-  const entry = RENDERER_PLUGIN_ENTRIES[pluginId]
+  const entry = await resolveRendererEntry(plugin)
   if (!entry) return []
 
   const created = createPluginContext(plugin.manifest)
   try {
-    const result = entry(created.ctx)
+    const result = await entry(created.ctx)
     const returned = result == null ? [] : Array.isArray(result) ? result : [result]
     pluginHostHooks.emit('plugin:activated', { pluginId })
     // First in the list = disposed last (reverse-order teardown), so the
@@ -147,6 +211,7 @@ export function initializePluginRuntime(): Promise<void> {
 
     const infos = await pluginsApi.list()
     const enabledById = new Map(infos.map((info) => [info.id, info.enabled]))
+    syncExternalEntryPaths(infos)
 
     // Declared commands activate their plugin on first execution.
     setPluginCommandActivationHandler(ensurePluginActive)
@@ -162,6 +227,21 @@ export function initializePluginRuntime(): Promise<void> {
       }
     }
 
+    // External plugins: code lives on disk, discovered by main. Register those
+    // that contribute to this renderer (a renderer entry file or declarative
+    // panels/commands); main-only (ipc) and invalid dirs carry neither and are
+    // skipped here. Built-ins already registered win any id clash.
+    for (const info of infos) {
+      if (!info.external || registry.get(info.id)) continue
+      const manifest = manifestFromInfo(info)
+      if (!info.entryPaths?.renderer && !hasDeclarativeContributions(manifest)) continue
+      const incompatibility = info.incompatibility ?? checkPluginApiCompatibility(manifest) ?? undefined
+      registry.register({ manifest, source: 'user' }, info.enabled, { incompatibility })
+      if (info.enabled && !incompatibility) {
+        declareContributions(manifest)
+      }
+    }
+
     // Eager activation only for plugins whose activation events (explicit or
     // inferred) say 'onStartup'; declared panels/commands activate lazily via
     // ensurePluginPanelReady / the command activation handler on first use.
@@ -172,6 +252,7 @@ export function initializePluginRuntime(): Promise<void> {
     }
 
     pluginsApi.onChanged((plugins) => {
+      syncExternalEntryPaths(plugins)
       for (const info of plugins) {
         const entry = registry?.get(info.id)
         if (!entry || entry.enabled === info.enabled) continue
