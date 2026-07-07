@@ -14,12 +14,13 @@ import type { PluginHostHook, PluginHostHookMap } from './host-hooks'
 
 /** Props passed to a contributed side-panel component */
 export interface PluginPanelProps {
-  /** True while this panel is the visible one in the plugin pane */
+  /** True while this panel is the visible one in its dock */
   isActive: boolean
 }
 
 /**
- * A side panel contributed to a plugin pane host (left or right shell edge).
+ * A side panel contributed to a plugin panel dock (any shell edge:
+ * left/right/top/bottom).
  *
  * Panels declared in the manifest's `contributes.sidePanels` block are the
  * source of truth for title/icon/location — registering the same panel id
@@ -29,13 +30,13 @@ export interface PluginPanelProps {
 export interface PluginSidePanelContribution {
   /** Panel id, unique within the plugin */
   id: string
-  /** Title shown in the pane header and toggle-rail tooltip */
+  /** Title shown in the dock header and toggle-rail tooltip */
   title: string
   /** Emoji shown in the toggle rail (falls back to the manifest icon) */
   icon?: string
   /** Which shell edge hosts the panel (default 'right') */
   location?: PluginPanelLocation
-  /** Panel body. Mounted while the pane is open and this panel is active. */
+  /** Panel body. Mounted while the dock is open and this panel is active. */
   component: ComponentType<PluginPanelProps>
 }
 
@@ -55,11 +56,11 @@ export interface PluginStorage {
 
 /** UI contributions (requires 'ui.sidePanel') */
 export interface PluginUi {
-  /** Register a side pane. Disposed automatically on deactivate. */
+  /** Register a side panel. Disposed automatically on deactivate. */
   registerSidePanel(contribution: PluginSidePanelContribution): PluginDisposable
-  /** Open the plugin pane and focus the given panel */
+  /** Open the panel's dock and focus the given panel */
   openSidePanel(panelId: string): void
-  /** Close the plugin pane if the given panel is active */
+  /** Close the panel's dock if the given panel is active */
   closeSidePanel(panelId: string): void
 }
 
