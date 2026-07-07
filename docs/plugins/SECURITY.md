@@ -151,11 +151,35 @@ authoritative checks are the main-process ones.
 
 ## External plugins
 
-External plugins under `~/.craft-agent/plugins/` are **manifest-only** in this
-version: they are discovered, validated, and listed in Settings, but no
-external *code* is loaded, and Settings marks them accordingly instead of
-offering a toggle that would silently do nothing. They are disabled by default
-(`defaultEnabled` is honored only for built-ins). Directory name must match
-manifest id, preventing a plugin from impersonating another id. External code
-loading is future work with the enforcement bar described at the top of this
-document.
+External plugins under `~/.craft-agent/plugins/<id>/` are discovered,
+validated, and — when enabled — **their code is loaded from disk** and run:
+the renderer entry (`entries.renderer`) in the app's renderer realm, the main
+entry (`entries.main`) in the main process. This is the editor / Obsidian
+community-plugin model, and its trust posture is explicit:
+
+- **External renderer code is trusted, first-party-by-install code.** It runs
+  in the same renderer realm as the app and every other plugin — the same v1
+  trust boundary that applies to built-in renderer plugins (see the top of
+  this document). Permissions are developer-intent/ergonomics there, not a
+  sandbox. The only hard boundary remains the sandboxed `<webview>` guest.
+- **The framework checks; the installer decides.** The host validates the
+  manifest, resolves entry files, refuses id/dir mismatches and path escapes
+  (`entries.*` cannot point outside the plugin directory), and gates the
+  `apiVersion`. Before enabling an external plugin, Settings shows its
+  declared permissions and a trust warning and requires explicit consent.
+  What it deliberately does **not** do is sandbox the code — a user who
+  enables a malicious external plugin has trusted it, exactly as with a VS
+  Code extension or an Obsidian community plugin. Install only plugins you
+  trust; refer to a plugin's source before enabling it.
+- **Guardrails that are enforced:** directory name must equal the manifest id
+  (no impersonation / built-in shadowing — built-ins always win an id clash);
+  entry files must resolve inside the plugin directory; a manifest that fails
+  validation is listed with its errors and can never be enabled; external
+  plugins are disabled by default (`defaultEnabled` is honored only for
+  built-ins). Main-process activation rolls back partial registrations on a
+  throw, and `plugins.invoke` is gated on the plugin being *actively* running,
+  so a handler that leaked before an activation error stays unreachable.
+
+Running **untrusted** external code with real isolation (an out-of-realm
+extension host, signed bundles) remains future work — see DESIGN.md. The v1
+boundary above is a trust decision surfaced to the installer, not a sandbox.
