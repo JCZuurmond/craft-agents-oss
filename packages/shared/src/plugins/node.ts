@@ -16,8 +16,19 @@ export {
   getPluginsConfigPath,
   loadExternalPlugin,
   loadExternalPlugins,
+  loadExternalPluginsDetailed,
+  resolvePluginEntryFile,
   loadPluginsConfig,
   savePluginsConfig,
   isPluginEnabled,
   setPluginEnabled,
 } from './storage.ts';
+
+export {
+  validatePluginDirectory,
+  scaffoldPlugin,
+  renderPluginScaffold,
+  type PluginDirValidation,
+  type ScaffoldOptions,
+  type ScaffoldResult,
+} from './authoring.ts';

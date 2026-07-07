@@ -83,12 +83,17 @@ export class PluginRegistry {
       description: entry.manifest.description,
       icon: entry.manifest.icon,
       permissions: entry.manifest.permissions,
+      apiVersion: entry.manifest.apiVersion,
       contributes: entry.manifest.contributes,
+      activationEvents: entry.manifest.activationEvents,
       source: entry.source,
       enabled: entry.enabled,
       status: entry.status,
       error: entry.error,
       incompatibility: entry.incompatibility,
+      // External (`user`) plugins load their code from disk at runtime; the
+      // host fills entryPaths and the Settings UI gates trust consent on this.
+      external: entry.source === 'user',
     }));
   }
 
