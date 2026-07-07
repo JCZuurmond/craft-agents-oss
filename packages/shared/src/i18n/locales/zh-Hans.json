@@ -1118,7 +1118,6 @@
   "settings.plugins.description": "添加功能和侧边面板的扩展",
   "settings.plugins.enableAnyway": "仍然启用",
   "settings.plugins.external": "第三方 — 从磁盘加载",
-  "settings.plugins.externalManifestOnly": "仅清单 — 此版本不会加载外部插件代码",
   "settings.plugins.incompatible": "不兼容",
   "settings.plugins.installed": "已安装的插件",
   "settings.plugins.installedDesc": "插件可在不修改 Craft Agents 的情况下扩展它。外部插件位于 ~/.craft-agent/plugins。",

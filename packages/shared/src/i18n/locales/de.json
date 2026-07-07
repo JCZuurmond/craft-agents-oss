@@ -1118,7 +1118,6 @@
   "settings.plugins.description": "Erweiterungen, die Funktionen und Seitenleisten hinzufügen",
   "settings.plugins.enableAnyway": "Trotzdem aktivieren",
   "settings.plugins.external": "Drittanbieter – von der Festplatte geladen",
-  "settings.plugins.externalManifestOnly": "Nur Manifest — externer Plugin-Code wird in dieser Version nicht geladen",
   "settings.plugins.incompatible": "Inkompatibel",
   "settings.plugins.installed": "Installierte Plugins",
   "settings.plugins.installedDesc": "Plugins erweitern Craft Agents, ohne es zu verändern. Externe Plugins liegen in ~/.craft-agent/plugins.",
