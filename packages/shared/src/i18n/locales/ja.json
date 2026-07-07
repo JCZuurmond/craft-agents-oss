@@ -1118,7 +1118,6 @@
   "settings.plugins.description": "機能やサイドパネルを追加する拡張機能",
   "settings.plugins.enableAnyway": "それでも有効にする",
   "settings.plugins.external": "サードパーティ — ディスクから読み込み",
-  "settings.plugins.externalManifestOnly": "マニフェストのみ — このバージョンでは外部プラグインのコードは読み込まれません",
   "settings.plugins.incompatible": "非互換",
   "settings.plugins.installed": "インストール済みプラグイン",
   "settings.plugins.installedDesc": "プラグインは Craft Agents を変更せずに拡張します。外部プラグインは ~/.craft-agent/plugins に配置します。",
