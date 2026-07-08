@@ -1,0 +1,233 @@
+# Zero-ops upstream sync for this fork.
+#
+# Every run:
+#   1. Rebases fork `main` onto craft-ai-agents/craft-agents-oss `main`, so
+#      every upstream commit lands here automatically. The single fork-only
+#      commit on `main` is replayed on top, which is why this uses rebase +
+#      force-with-lease and not a fast-forward.
+#   2. Rebases every open PR branch onto its fresh base, walking the stack
+#      root-first so a stacked PR is replayed onto its already-rebased parent
+#      and its diff stays limited to its own commits.
+#
+# Why PR branches rebase onto fork `main` and not straight onto upstream:
+# `main` carries one fork-only commit, and rebasing a branch onto upstream
+# instead would replay a *copy* of that commit — which conflicts as soon as
+# upstream ships a file of the same name, and leaves the branch on a stale
+# lockfile that fails CI. Rebasing onto fork `main` makes the fork commit a
+# genuine ancestor: nothing is replayed, nothing can conflict, and every
+# branch inherits the working lockfile. PR diffs are computed against each
+# PR's own base, so this does not add anything to them.
+#
+# Why the fork commit exists at all: upstream's `bun.lock` pins
+# `@types/bun` transitively at whatever version was current when upstream
+# released, so `bun install --frozen-lockfile` — run by validate.yml — fails
+# on a pristine checkout as soon as a newer `@types/bun` is published. The
+# sync regenerates the lockfile and folds it into that one commit.
+#
+# Keep `main` at exactly "upstream + that one commit", and keep the commit as
+# small as possible: every fork-only file is a permanent rebase-conflict
+# surface. This workflow previously also carried a reconstructed
+# `tsconfig.base.json`, and the sync broke the moment upstream shipped its own
+# (add/add conflict). If upstream starts shipping a file the fork patches,
+# drop the fork's copy rather than resolving the conflict every run.
+#
+# On a rebase conflict the run fails, leaves a comment on the affected PR and
+# force-pushes nothing.
+#
+# Notes:
+#   - Scheduled workflows only run from the default branch, and GitHub keeps
+#     them disabled in forks until enabled once under the Actions tab.
+#   - Pushes made with the default GITHUB_TOKEN do not re-trigger CI on the
+#     rebased PRs. To have the Validate checks re-run after each sync, add a
+#     `SYNC_TOKEN` repository secret containing a PAT with contents:write.
+
+name: Upstream Sync
+
+on:
+  schedule:
+    - cron: "27 */6 * * *" # every 6 hours, offset from the top of the hour
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: craft-ai-agents/craft-agents-oss
+  UPSTREAM_BRANCH: main
+  FORK_BRANCH: main
+  LOCKFILE_COMMIT_SUBJECT: "chore(deps): regenerate bun.lock for the OSS workspace set"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # bun.lock is regenerated from scratch below, so its content never
+          # needs merging. Register the built-in "ours" merge driver and point
+          # bun.lock at it, so replaying the fork commit auto-keeps one side
+          # instead of stopping on a conflict. The rule lives in
+          # .git/info/attributes rather than a tracked .gitattributes: the
+          # rebase checks out the upstream tree before replaying the fork
+          # commit, so a tracked file would not be in effect yet — and it would
+          # be one more fork-only file to conflict over.
+          git config merge.ours.driver true
+          echo "bun.lock merge=ours" > .git/info/attributes
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.10" # keep in sync with validate.yml
+
+      - name: Fetch upstream and fork heads
+        run: |
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch --quiet upstream "${UPSTREAM_BRANCH}"
+          git fetch --quiet origin
+
+      - name: Sync fork main with upstream
+        id: sync-main
+        run: |
+          git checkout -B "${FORK_BRANCH}" "origin/${FORK_BRANCH}"
+          before=$(git rev-parse HEAD)
+          # PR branches sit on the pre-rebase main; the next step needs that
+          # commit as the cut-off when replaying them onto the new one.
+          echo "old_head=${before}" >> "$GITHUB_OUTPUT"
+
+          if ! git rebase "upstream/${UPSTREAM_BRANCH}"; then
+            git rebase --abort || true
+            echo "::error::Fork-only commits on ${FORK_BRANCH} conflict with upstream/${UPSTREAM_BRANCH}; resolve manually."
+            exit 1
+          fi
+
+          # Regenerate the lockfile against the live registry and fold it back
+          # into the fork commit, so main stays exactly upstream + one commit.
+          bun install --lockfile-only
+          if ! git diff --quiet -- bun.lock; then
+            git add bun.lock
+            git commit --amend --no-edit
+          fi
+
+          after=$(git rev-parse HEAD)
+          if [ "${before}" = "${after}" ]; then
+            echo "${FORK_BRANCH} already up to date with upstream/${UPSTREAM_BRANCH}."
+          else
+            git push --force-with-lease origin "${FORK_BRANCH}"
+            echo "Synced ${FORK_BRANCH}: ${before} -> ${after}"
+          fi
+
+      - name: Rebase open PR branches onto their fresh bases
+        id: rebase-prs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAIN_OLD_HEAD: ${{ steps.sync-main.outputs.old_head }}
+        run: |
+          # Open PRs, as "number<TAB>head<TAB>base" lines.
+          gh pr list --repo "${GITHUB_REPOSITORY}" --state open --limit 100 \
+            --json number,headRefName,baseRefName \
+            --jq '.[] | [.number, .headRefName, .baseRefName] | @tsv' > /tmp/prs.tsv
+
+          if [ ! -s /tmp/prs.tsv ]; then
+            echo "No open PRs; nothing to rebase."
+            exit 0
+          fi
+
+          # /tmp/done lists branches already at their fresh base this run;
+          # /tmp/oldhead-<branch> records a branch's pre-rebase head, which its
+          # children need as the rebase cut-off point.
+          : > /tmp/done
+          echo "${FORK_BRANCH}" >> /tmp/done
+          echo "${MAIN_OLD_HEAD}" > "/tmp/oldhead-${FORK_BRANCH}"
+
+          # Walk the stack root-first: a PR is only rebased once its base
+          # branch has been. Repeat until no branch makes progress, so any
+          # depth of stacking is handled without hardcoding the order.
+          progress=1
+          while [ "${progress}" = "1" ]; do
+            progress=0
+            while IFS=$'\t' read -r number head base <&3; do
+              if grep -qxF "${head}" /tmp/done; then continue; fi
+              if ! grep -qxF "${base}" /tmp/done; then continue; fi  # parent not ready
+
+              old_head=$(git rev-parse "origin/${head}")
+              # Cut off at the base branch's pre-rebase head, so only the
+              # commits this PR adds are replayed and the ones it inherited
+              # from its base are dropped rather than duplicated.
+              old_base=$(cat "/tmp/oldhead-$(echo "${base}" | tr / -)")
+              echo "${old_head}" > "/tmp/oldhead-$(echo "${head}" | tr / -)"
+
+              git checkout -B "${head}" "origin/${head}"
+
+              if git merge-base --is-ancestor "${base}" HEAD; then
+                echo "PR #${number}: ${head} already contains ${base}; nothing to do."
+                echo "${head}" >> /tmp/done
+                progress=1
+                continue
+              fi
+
+              if ! git rebase --onto "${base}" "${old_base}" "${head}"; then
+                git rebase --abort || true
+                echo "conflict_pr=${number}" >> "$GITHUB_OUTPUT"
+                echo "conflict_branch=${head}" >> "$GITHUB_OUTPUT"
+                echo "::error::Rebasing ${head} (PR #${number}) onto ${base} hit conflicts; resolve manually."
+                exit 1
+              fi
+
+              # A branch that changes dependencies needs its own lockfile on
+              # top of main's. Keep it in a single dedicated commit so repeated
+              # syncs amend it instead of stacking one commit per run.
+              bun install --lockfile-only
+              if ! git diff --quiet -- bun.lock; then
+                git add bun.lock
+                if [ "$(git log -1 --format=%s)" = "${LOCKFILE_COMMIT_SUBJECT}" ]; then
+                  git commit --amend --no-edit
+                else
+                  git commit -m "${LOCKFILE_COMMIT_SUBJECT}"
+                fi
+                echo "PR #${number}: regenerated bun.lock on ${head}."
+              fi
+
+              git push --force-with-lease origin "${head}"
+              echo "PR #${number}: rebased ${head} onto ${base} ($(git rev-parse --short "${base}"))."
+              echo "${head}" >> /tmp/done
+              progress=1
+            done 3< /tmp/prs.tsv
+          done
+
+          # Anything left over is a PR whose base is neither main nor another
+          # open PR branch — report it rather than silently skipping.
+          while IFS=$'\t' read -r number head base <&3; do
+            if grep -qxF "${head}" /tmp/done; then continue; fi
+            echo "::warning::Skipped PR #${number} (${head}): base ${base} is not main or another open PR branch."
+          done 3< /tmp/prs.tsv
+
+      - name: Flag rebase conflict on the PR
+        if: failure() && steps.rebase-prs.outputs.conflict_pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.rebase-prs.outputs.conflict_pr }}
+          BRANCH: ${{ steps.rebase-prs.outputs.conflict_branch }}
+        run: |
+          marker="<!-- upstream-sync-conflict -->"
+          last_comment=$(gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --json comments --jq '.comments[-1].body' || echo "")
+          if [ "${last_comment#*"${marker}"}" != "${last_comment}" ]; then
+            echo "Conflict already flagged in the latest PR comment; not commenting again."
+            exit 0
+          fi
+          gh pr comment "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --body "${marker}
+          :warning: **Upstream sync conflict** — rebasing \`${BRANCH}\` onto its base branch hit conflicts and needs manual resolution. See the [failed run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})."
