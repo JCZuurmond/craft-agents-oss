@@ -1,0 +1,15 @@
+# bun.lock is a generated lockfile this fork must keep different from upstream:
+# the OSS export drops the apps/marketing workspace, so upstream's lockfile
+# fails `bun install --frozen-lockfile`. Upstream also regenerates bun.lock on
+# almost every release, and a generated lockfile can't be three-way merged, so
+# a rebase would otherwise conflict on it every single time. Resolve it to one
+# side automatically ("ours") — the upstream-sync workflow regenerates the
+# correct OSS lockfile from scratch right afterward, so the retained content is
+# irrelevant.
+#
+# The "ours" driver must be registered to take effect:
+#   git config merge.ours.driver true
+# The sync workflow sets that and additionally installs this rule in
+# .git/info/attributes, because while it replays the fork commit onto the
+# upstream tree this tracked file is not yet in effect when bun.lock is merged.
+bun.lock merge=ours
