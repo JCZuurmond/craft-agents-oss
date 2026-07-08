@@ -1,0 +1,133 @@
+# Zero-ops upstream sync for this fork.
+#
+# Every run:
+#   1. Rebases fork `main` onto lukilabs/craft-agents-oss `main`, so every
+#      upstream commit lands here automatically. Fork-only commits on `main`
+#      (such as the one adding this workflow) are replayed on top, which is
+#      why this uses rebase + force-with-lease instead of a fast-forward.
+#   2. Rebases the feature branch under review in PR #1 onto the fresh
+#      *upstream* head — deliberately not fork `main`, so the branch never
+#      absorbs fork-only commits and stays clean for an eventual PR against
+#      the upstream repository. The merge-base with fork `main` is the same
+#      either way, so the PR #1 diff is unaffected.
+#
+# On a rebase conflict the run fails and leaves a comment on the PR; nothing
+# is force-pushed in that case.
+#
+# Notes:
+#   - Scheduled workflows only run from the default branch, and GitHub keeps
+#     them disabled in forks until enabled once under the Actions tab.
+#   - Pushes made with the default GITHUB_TOKEN do not re-trigger CI on the
+#     rebased PR. To have the Validate checks re-run after each sync, add a
+#     `SYNC_TOKEN` repository secret containing a PAT with contents:write.
+
+name: Upstream Sync
+
+on:
+  schedule:
+    - cron: "27 */6 * * *" # every 6 hours, offset from the top of the hour
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: lukilabs/craft-agents-oss
+  UPSTREAM_BRANCH: main
+  FORK_BRANCH: main
+  FEATURE_BRANCH: claude/serene-meitner-4ksi6h
+  PR_NUMBER: "1"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream and fork heads
+        run: |
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch upstream "${UPSTREAM_BRANCH}"
+          git fetch origin "${FORK_BRANCH}"
+
+      - name: Sync fork main with upstream
+        run: |
+          git checkout -B "${FORK_BRANCH}" "origin/${FORK_BRANCH}"
+          before=$(git rev-parse HEAD)
+
+          if ! git rebase "upstream/${UPSTREAM_BRANCH}"; then
+            git rebase --abort || true
+            echo "::error::Fork-only commits on ${FORK_BRANCH} conflict with upstream/${UPSTREAM_BRANCH}; resolve manually."
+            exit 1
+          fi
+
+          after=$(git rev-parse HEAD)
+          if [ "$before" = "$after" ]; then
+            echo "${FORK_BRANCH} is already up to date with upstream/${UPSTREAM_BRANCH}."
+          else
+            git push --force-with-lease origin "${FORK_BRANCH}"
+            echo "Synced ${FORK_BRANCH}: ${before} -> ${after}"
+          fi
+
+      - name: Rebase feature branch onto fresh upstream head
+        id: rebase-feature
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! git ls-remote --exit-code --heads origin "${FEATURE_BRANCH}" > /dev/null; then
+            echo "Branch ${FEATURE_BRANCH} no longer exists; nothing to rebase."
+            exit 0
+          fi
+
+          pr_state=$(gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --json state --jq .state)
+          if [ "${pr_state}" != "OPEN" ]; then
+            echo "PR #${PR_NUMBER} is ${pr_state}; skipping rebase."
+            exit 0
+          fi
+
+          git fetch origin "${FEATURE_BRANCH}"
+          git checkout -B "${FEATURE_BRANCH}" "origin/${FEATURE_BRANCH}"
+
+          if git merge-base --is-ancestor "upstream/${UPSTREAM_BRANCH}" HEAD; then
+            echo "${FEATURE_BRANCH} already contains upstream/${UPSTREAM_BRANCH}; nothing to do."
+            exit 0
+          fi
+
+          if ! git rebase "upstream/${UPSTREAM_BRANCH}"; then
+            git rebase --abort || true
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            echo "::error::Rebasing ${FEATURE_BRANCH} onto upstream/${UPSTREAM_BRANCH} hit conflicts; resolve manually."
+            exit 1
+          fi
+
+          git push --force-with-lease origin "${FEATURE_BRANCH}"
+          echo "Rebased ${FEATURE_BRANCH} onto upstream/${UPSTREAM_BRANCH} ($(git rev-parse --short "upstream/${UPSTREAM_BRANCH}"))."
+
+      - name: Flag rebase conflict on the PR
+        if: failure() && steps.rebase-feature.outputs.conflict == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          marker="<!-- upstream-sync-conflict -->"
+          last_comment=$(gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --json comments --jq '.comments[-1].body' || echo "")
+          if [ "${last_comment#*"${marker}"}" != "${last_comment}" ]; then
+            echo "Conflict already flagged in the latest PR comment; not commenting again."
+            exit 0
+          fi
+          gh pr comment "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --body "${marker}
+          :warning: **Upstream sync conflict** — rebasing \`${FEATURE_BRANCH}\` onto \`${UPSTREAM_REPO}@${UPSTREAM_BRANCH}\` hit conflicts and needs manual resolution. See the [failed run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})."
