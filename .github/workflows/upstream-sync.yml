@@ -1,0 +1,175 @@
+# Zero-ops upstream sync for this fork.
+#
+# Every run:
+#   1. Rebases fork `main` onto lukilabs/craft-agents-oss `main`, so every
+#      upstream commit lands here automatically. Fork-only commits on `main`
+#      (such as the one adding this workflow) are replayed on top, which is
+#      why this uses rebase + force-with-lease instead of a fast-forward.
+#   2. Rebases the feature branch under review in PR #1 onto the fresh
+#      *upstream* head — deliberately not fork `main`, so the branch never
+#      absorbs fork-only commits and stays clean for an eventual PR against
+#      the upstream repository. The merge-base with fork `main` is the same
+#      either way, so the PR #1 diff is unaffected.
+#
+# The OSS export ships a `bun.lock` that references the stripped
+# `apps/marketing` workspace, so `bun install --frozen-lockfile` — run by
+# validate.yml — fails on a pristine checkout. `bun.lock` is a generated file
+# that both the fork and upstream rewrite, so it cannot be three-way merged on
+# rebase. Rather than hand-resolving that conflict, the sync registers an
+# "ours" merge driver for `bun.lock` (see the Configure git step) so the rebase
+# auto-resolves it, then regenerates the correct lockfile for the OSS workspace
+# set and folds it into the single fork commit — keeping `main` exactly
+# `upstream + one commit` with green CI and zero ops. The feature branch is
+# deliberately left untouched here so its lockfile stays correct for the
+# upstream repo, where `apps/marketing` still exists.
+#
+# On a rebase conflict in any other file the run fails and leaves a comment on
+# the PR; nothing is force-pushed in that case.
+#
+# Notes:
+#   - Scheduled workflows only run from the default branch, and GitHub keeps
+#     them disabled in forks until enabled once under the Actions tab.
+#   - Pushes made with the default GITHUB_TOKEN do not re-trigger CI on the
+#     rebased PR. To have the Validate checks re-run after each sync, add a
+#     `SYNC_TOKEN` repository secret containing a PAT with contents:write.
+
+name: Upstream Sync
+
+on:
+  schedule:
+    - cron: "27 */6 * * *" # every 6 hours, offset from the top of the hour
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: lukilabs/craft-agents-oss
+  UPSTREAM_BRANCH: main
+  FORK_BRANCH: main
+  FEATURE_BRANCH: claude/serene-meitner-4ksi6h
+  PR_NUMBER: "1"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # bun.lock is regenerated from scratch every sync, so its content
+          # never needs merging. Register the built-in "ours" merge driver and
+          # point bun.lock at it, so the rebase auto-keeps one side instead of
+          # stopping on a conflict. The rule goes in .git/info/attributes rather
+          # than the tracked .gitattributes because the rebase checks out the
+          # upstream tree before replaying the fork commit, so a .gitattributes
+          # added by that same commit is not yet in effect when bun.lock merges.
+          git config merge.ours.driver true
+          echo "bun.lock merge=ours" > .git/info/attributes
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.10" # keep in sync with validate.yml
+
+      - name: Fetch upstream and fork heads
+        run: |
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch upstream "${UPSTREAM_BRANCH}"
+          git fetch origin "${FORK_BRANCH}"
+
+      - name: Sync fork main with upstream
+        run: |
+          git checkout -B "${FORK_BRANCH}" "origin/${FORK_BRANCH}"
+          before=$(git rev-parse HEAD)
+
+          # Replay the single fork commit onto the fresh upstream head. bun.lock
+          # can't be three-way merged (it's generated and both sides rewrite it),
+          # so the "ours" driver configured above auto-resolves it; it is
+          # regenerated correctly just below. A conflict in any other file is a
+          # real one and aborts the run.
+          if ! git rebase "upstream/${UPSTREAM_BRANCH}"; then
+            git rebase --abort || true
+            echo "::error::Fork-only commits on ${FORK_BRANCH} conflict with upstream/${UPSTREAM_BRANCH}; resolve manually."
+            exit 1
+          fi
+
+          # Regenerate the lockfile for the OSS workspace set (no apps/marketing)
+          # so `bun install --frozen-lockfile` in validate.yml passes, and fold
+          # it back into the fork commit so main stays exactly upstream + one
+          # commit.
+          bun install --lockfile-only
+          if ! git diff --quiet -- bun.lock; then
+            git add bun.lock
+            git commit --amend --no-edit
+          fi
+
+          after=$(git rev-parse HEAD)
+          if git diff --quiet "origin/${FORK_BRANCH}" "${FORK_BRANCH}"; then
+            echo "${FORK_BRANCH} already matches upstream + the sync commit; nothing to push."
+          else
+            git push --force-with-lease origin "${FORK_BRANCH}"
+            echo "Synced ${FORK_BRANCH}: ${before} -> ${after}"
+          fi
+
+      - name: Rebase feature branch onto fresh upstream head
+        id: rebase-feature
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! git ls-remote --exit-code --heads origin "${FEATURE_BRANCH}" > /dev/null; then
+            echo "Branch ${FEATURE_BRANCH} no longer exists; nothing to rebase."
+            exit 0
+          fi
+
+          pr_state=$(gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --json state --jq .state)
+          if [ "${pr_state}" != "OPEN" ]; then
+            echo "PR #${PR_NUMBER} is ${pr_state}; skipping rebase."
+            exit 0
+          fi
+
+          git fetch origin "${FEATURE_BRANCH}"
+          git checkout -B "${FEATURE_BRANCH}" "origin/${FEATURE_BRANCH}"
+
+          if git merge-base --is-ancestor "upstream/${UPSTREAM_BRANCH}" HEAD; then
+            echo "${FEATURE_BRANCH} already contains upstream/${UPSTREAM_BRANCH}; nothing to do."
+            exit 0
+          fi
+
+          if ! git rebase "upstream/${UPSTREAM_BRANCH}"; then
+            git rebase --abort || true
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            echo "::error::Rebasing ${FEATURE_BRANCH} onto upstream/${UPSTREAM_BRANCH} hit conflicts; resolve manually."
+            exit 1
+          fi
+
+          git push --force-with-lease origin "${FEATURE_BRANCH}"
+          echo "Rebased ${FEATURE_BRANCH} onto upstream/${UPSTREAM_BRANCH} ($(git rev-parse --short "upstream/${UPSTREAM_BRANCH}"))."
+
+      - name: Flag rebase conflict on the PR
+        if: failure() && steps.rebase-feature.outputs.conflict == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          marker="<!-- upstream-sync-conflict -->"
+          last_comment=$(gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --json comments --jq '.comments[-1].body' || echo "")
+          if [ "${last_comment#*"${marker}"}" != "${last_comment}" ]; then
+            echo "Conflict already flagged in the latest PR comment; not commenting again."
+            exit 0
+          fi
+          gh pr comment "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --body "${marker}
+          :warning: **Upstream sync conflict** — rebasing \`${FEATURE_BRANCH}\` onto \`${UPSTREAM_REPO}@${UPSTREAM_BRANCH}\` hit conflicts and needs manual resolution. See the [failed run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})."
