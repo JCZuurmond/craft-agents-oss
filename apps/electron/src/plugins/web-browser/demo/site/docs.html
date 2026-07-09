@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Plugin Framework Docs</title>
+  <link rel="stylesheet" href="/demo-site/site.css" />
+</head>
+<body>
+  <nav>
+    <strong>Craft Agents</strong>
+    <a href="/demo-site/index.html">Home</a>
+    <a href="/demo-site/features.html">Features</a>
+  </nav>
+  <main>
+    <p class="eyebrow">Framework proof</p>
+    <h1>Plugin Framework Docs</h1>
+    <p>
+      The Browser Pane is declared in plugin manifest data and activates lazily
+      when the user opens its contributed side panel.
+    </p>
+    <section>
+      <h2>Public API only</h2>
+      <p>
+        The panel receives its webview partition from <code>ctx.webviewPartition</code>,
+        stores the last URL with <code>ctx.storage</code>, and registers itself through
+        <code>ctx.ui.registerSidePanel()</code>.
+      </p>
+    </section>
+    <section>
+      <h2>Host enforced boundary</h2>
+      <p>
+        In Electron, main-process webview hardening validates the plugin partition,
+        strips preload scripts, denies permissions, and blocks unsafe navigation.
+      </p>
+    </section>
+  </main>
+</body>
+</html>
