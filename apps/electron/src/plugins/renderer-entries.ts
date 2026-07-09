@@ -7,5 +7,8 @@
  */
 
 import type { PluginRendererEntry } from '../renderer/plugins/types'
+import { activate as activatePluginConsole } from './plugin-console/renderer'
 
-export const RENDERER_PLUGIN_ENTRIES: Record<string, PluginRendererEntry> = {}
+export const RENDERER_PLUGIN_ENTRIES: Record<string, PluginRendererEntry> = {
+  'plugin-console': activatePluginConsole,
+}
