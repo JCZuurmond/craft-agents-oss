@@ -1,0 +1,10 @@
+{
+  "name": "@craft-agent/plugin-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "record": "node record.mjs",
+    "comment": "node comment-demos.mjs"
+  },
+  "devDependencies": {}
+}
