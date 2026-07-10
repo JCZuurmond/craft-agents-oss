@@ -121,6 +121,16 @@ export interface ScaffoldResult {
   files: string[];
 }
 
+const SCAFFOLD_PLUGIN_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+function assertScaffoldPluginId(id: string): void {
+  if (!SCAFFOLD_PLUGIN_ID_PATTERN.test(id)) {
+    throw new Error(
+      `invalid plugin id '${id}': use lowercase letters, digits, and hyphens (e.g. my-plugin)`,
+    );
+  }
+}
+
 function titleize(id: string): string {
   return id
     .split('-')
@@ -182,6 +192,7 @@ export function activate(ctx) {
 
 /** Create a runnable starter plugin under `dir/id/`. */
 export function scaffoldPlugin(opts: ScaffoldOptions): ScaffoldResult {
+  assertScaffoldPluginId(opts.id);
   const path = join(resolve(opts.dir), opts.id);
   if (existsSync(path) && !opts.force) {
     throw new Error(`refusing to overwrite existing directory: ${path} (use --force)`);
