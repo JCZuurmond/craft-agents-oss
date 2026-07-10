@@ -108,6 +108,18 @@ describe('scaffoldPlugin', () => {
     expect(() => scaffoldPlugin({ id: 'dup', dir: root, force: true })).not.toThrow();
   });
 
+  test('rejects invalid ids before writing', () => {
+    expect(() => scaffoldPlugin({ id: 'Bad_ID', dir: root })).toThrow('invalid plugin id');
+    expect(existsSync(join(root, 'Bad_ID'))).toBe(false);
+  });
+
+  test('rejects path traversal ids before writing outside the target dir', () => {
+    const pluginsDir = join(root, 'plugins');
+    mkdirSync(pluginsDir, { recursive: true });
+    expect(() => scaffoldPlugin({ id: '../escaped', dir: pluginsDir })).toThrow('invalid plugin id');
+    expect(existsSync(join(root, 'escaped'))).toBe(false);
+  });
+
   test('scaffold manifest passes the shared manifest schema', () => {
     const { manifest: manifestJson } = renderPluginScaffold('cool-thing');
     const parsed = validatePluginManifest(JSON.parse(manifestJson));
