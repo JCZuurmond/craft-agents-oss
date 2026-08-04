@@ -13,5 +13,8 @@
  */
 
 import type { PluginManifest } from '@craft-agent/shared/plugins/types'
+import { FOCUS_TIMER_PLUGIN_MANIFEST } from './focus-timer/manifest'
 
-export const BUILTIN_PLUGIN_MANIFESTS: PluginManifest[] = []
+export const BUILTIN_PLUGIN_MANIFESTS: PluginManifest[] = [
+  FOCUS_TIMER_PLUGIN_MANIFEST,
+]
