@@ -60,6 +60,11 @@ export const KEYS = {
   // Workspace navigation state (workspace-scoped via suffix = workspaceSlug)
   // Stores the full URL search string so switching back restores panels/focus/sidebar
   workspaceUrl: 'workspace-url',
+
+  // Plugin panel docks (per shell edge via suffix = location)
+  pluginPanelDockOpen: 'plugin-panel-dock-open',
+  pluginPanelDockSize: 'plugin-panel-dock-size',
+  pluginPanelDockActivePanel: 'plugin-panel-dock-active-panel',
 } as const
 
 export type StorageKey = typeof KEYS[keyof typeof KEYS]
