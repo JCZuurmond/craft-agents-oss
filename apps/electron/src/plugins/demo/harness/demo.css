@@ -1,0 +1,7 @@
+/*
+ * Demo-only stylesheet: reuse the app's full theme + Tailwind pipeline. The
+ * app's index.css already @sources src/plugins/** (this harness included), so
+ * plugin panel components get their utility classes with no extra directives.
+ * Only imported by the standalone demo Vite config under src/plugins/demo.
+ */
+@import "../../../renderer/index.css";
