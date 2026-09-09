@@ -302,9 +302,16 @@ try {
     $RendererDir = "$ElectronDir\dist\renderer"
     if (Test-Path $RendererDir) { Remove-Item -Recurse -Force $RendererDir }
 
-    # Run vite build
-    npx vite build --config apps/electron/vite.config.ts
-    if ($LASTEXITCODE -ne 0) { throw "Renderer build failed" }
+    # Run vite build with the same renderer heap bump as scripts/electron-build-renderer.ts;
+    # Node's default heap is too small for the renderer bundle on windows-latest runners.
+    $PrevNodeOptions = $env:NODE_OPTIONS
+    try {
+        $env:NODE_OPTIONS = "--max-old-space-size=4096"
+        npx vite build --config apps/electron/vite.config.ts
+        if ($LASTEXITCODE -ne 0) { throw "Renderer build failed" }
+    } finally {
+        $env:NODE_OPTIONS = $PrevNodeOptions
+    }
 
     # Verify renderer was built
     if (-not (Test-Path "$RendererDir\index.html")) {

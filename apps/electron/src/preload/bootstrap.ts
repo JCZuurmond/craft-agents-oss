@@ -410,6 +410,22 @@ client.onConnectionStateChanged((state) => {
   }
 }
 
+// Plugins — direct IPC (not WS RPC): plugins are an Electron-client feature
+// hosted by the local main process (src/main/plugin-host.ts).
+;(api as ElectronAPI).plugins = {
+  list: () => ipcRenderer.invoke('__plugins:list'),
+  setEnabled: (id: string, enabled: boolean) => ipcRenderer.invoke('__plugins:setEnabled', id, enabled),
+  invoke: (pluginId: string, channel: string, args?: unknown) =>
+    ipcRenderer.invoke('__plugins:invoke', pluginId, channel, args),
+  reportRendererStatus: (pluginId: string, error: string | null) =>
+    ipcRenderer.invoke('__plugins:reportRendererStatus', pluginId, error),
+  onChanged: (callback) => {
+    const handler = (_e: unknown, plugins: Parameters<typeof callback>[0]) => callback(plugins)
+    ipcRenderer.on('__plugins:changed', handler)
+    return () => { ipcRenderer.removeListener('__plugins:changed', handler) }
+  },
+}
+
 // App lifecycle — direct IPC (not WS RPC) since it restarts the server itself
 ;(api as ElectronAPI).relaunchApp = () => ipcRenderer.invoke('app:relaunch')
 ;(api as ElectronAPI).removeWorkspace = (workspaceId: string) => ipcRenderer.invoke('workspace:remove', workspaceId)

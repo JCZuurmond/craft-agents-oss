@@ -14,6 +14,7 @@ Core business logic package for Craft Agent:
 - `src/pages/` — workspace-scoped mini dashboards (`pages/{slug}/page.json`); storage, refresh hook, action bridge
 - `src/config/` — config/preferences/theme/watcher
 - `src/credentials/` — encrypted credential management
+- `src/plugins/` — plugin manifest types, zod validation, host-agnostic registry (browser-safe); discovery/enablement persistence in the Node-only `plugins/node` subpath
 
 ## Commands
 From repo root:
