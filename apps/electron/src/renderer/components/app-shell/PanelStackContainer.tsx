@@ -52,6 +52,8 @@ interface PanelStackContainerProps {
   navigatorSlot: React.ReactNode
   navigatorWidth: number
   isSidebarAndNavigatorHidden: boolean
+  /** A visible left companion (plugin dock) means the stack is not at the window's left edge */
+  isLeftSidebarVisible?: boolean
   isRightSidebarVisible?: boolean
   /** Compact mode: single-panel, list/content toggle (mobile or narrow window) */
   isCompact?: boolean
@@ -64,6 +66,7 @@ export function PanelStackContainer({
   navigatorSlot,
   navigatorWidth,
   isSidebarAndNavigatorHidden,
+  isLeftSidebarVisible,
   isRightSidebarVisible,
   isCompact = false,
   isResizing,
@@ -94,7 +97,7 @@ export function PanelStackContainer({
   // animate both slots in lockstep.
   const hasNavigator = isCompact ? navigatorWidth > 0 : navigatorWidth > 0
   const isMultiPanel = visiblePanels.length > 1
-  const isLeftEdge = !hasSidebar && !hasNavigator
+  const isLeftEdge = !hasSidebar && !hasNavigator && !isLeftSidebarVisible
 
   // Auto-scroll to newly pushed content panel (desktop multi-panel only).
   // Compact mode is single-panel so there's nothing to scroll into view.

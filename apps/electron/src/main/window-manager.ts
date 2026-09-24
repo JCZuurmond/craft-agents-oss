@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url'
 import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 import { classifyExternalUrl, formatBlockedUrlError } from '@craft-agent/shared/utils/url-safety'
 import { RPC_CHANNELS, type WindowCloseRequestSource } from '../shared/types'
+import { isPluginWebviewEnabled } from './plugin-host'
 import type { SavedWindow } from './window-state'
 
 // Vite dev server URL for hot reload
@@ -258,7 +259,10 @@ export class WindowManager {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: false,
-        webviewTag: false // Browser integration uses WebContentsView, not <webview>
+        // Only enabled when an enabled plugin declares `ui.webview`; every
+        // attach is still hardened in plugin-host.ts (will-attach-webview).
+        // Core browser integration uses WebContentsView, not <webview>.
+        webviewTag: isPluginWebviewEnabled()
       }
     })
 
