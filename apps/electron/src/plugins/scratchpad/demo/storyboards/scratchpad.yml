@@ -1,0 +1,94 @@
+output: ../../../../../../docs/plugins/scratchpad/demo/scratchpad-demo.webm
+# The plugin ships defaultEnabled: false — ?enable seeds the user's Settings
+# opt-in, exactly as a persisted plugins.json would.
+url: "http://127.0.0.1:5199/?enable=scratchpad"
+server: exec node ../../../../../../node_modules/vite/bin/vite.js --host 127.0.0.1 --config vite.config.ts
+
+viewport:
+  width: 1280
+  height: 800
+
+cursor:
+  visible: true
+  clicks: true
+  color: "#8b5cf6"
+  size: 16
+  click_size: 42
+
+wait_for: '[data-panel-role="plugin-rail"][data-panel-location="left"] button[aria-label="Scratchpad"]'
+
+scenes:
+  - name: Declared contribution on the left edge
+    do:
+      - js: |
+          window.__pluginDemo?.setCaption(
+            'The Scratchpad contributes this left-edge rail toggle from manifest data alone — no plugin code has loaded yet.'
+          );
+      - pause: 2.5
+      - screenshot: ../../../../../../docs/plugins/scratchpad/demo/01-declared-rail.png
+
+  - name: Lazy activation on first open
+    do:
+      - click: '[data-panel-role="plugin-rail"][data-panel-location="left"] button[aria-label="Scratchpad"]'
+      - wait_for: 'textarea[aria-label="Scratchpad note"]'
+      - js: |
+          window.__pluginDemo?.setCaption(
+            'First open activates the plugin with onPanel:notes and mounts the real Scratchpad component in the left dock.'
+          );
+      - pause: 2.5
+      - screenshot: ../../../../../../docs/plugins/scratchpad/demo/02-lazy-activation.png
+
+  - name: Autosave on every edit
+    do:
+      - click: 'textarea[aria-label="Scratchpad note"]'
+      - fill:
+          into: 'textarea[aria-label="Scratchpad note"]'
+          text: "Q3 release notes — follow-ups:\n\n- plugin framework is the headline\n- credit the four reference plugins\n- ask design for a hero GIF"
+      - wait_for: 'text=Saved ✓'
+      - js: |
+          window.__pluginDemo?.setCaption(
+            'Every keystroke persists through ctx.storage — the plugin’s scoped key-value namespace.'
+          );
+      - pause: 2.5
+      - screenshot: ../../../../../../docs/plugins/scratchpad/demo/03-autosave.png
+
+  - name: Survives close and reopen
+    do:
+      - click: '[data-panel-role="plugin-dock"][data-panel-location="left"] button[aria-label="Close"]'
+      - pause: 0.8
+      - click: '[data-panel-role="plugin-rail"][data-panel-location="left"] button[aria-label="Scratchpad"]'
+      - wait_for: 'text=Restored from plugin storage'
+      - js: |
+          window.__pluginDemo?.setCaption('Close and reopen: the note comes back from scoped storage.');
+      - pause: 2.2
+      - screenshot: ../../../../../../docs/plugins/scratchpad/demo/04-restored.png
+
+  - name: Survives live disable/enable from Settings
+    do:
+      - js: window.__pluginDemo?.openSettings(true);
+      - wait_for: '[data-testid="demo-settings"]'
+      - click: '[data-testid="demo-settings"] button[role="switch"]'
+      - pause: 1
+      - js: |
+          window.__pluginDemo?.setCaption(
+            'Disabling the plugin disposes every contribution live — pane, rail, and storage handles.'
+          );
+      - pause: 2.2
+      - screenshot: ../../../../../../docs/plugins/scratchpad/demo/05-live-disable.png
+      - click: '[data-testid="demo-settings"] button[role="switch"]'
+      - wait_for: '[data-panel-role="plugin-rail"][data-panel-location="left"] button[aria-label="Scratchpad"]'
+      - js: window.__pluginDemo?.openSettings(false);
+      - click: '[data-panel-role="plugin-rail"][data-panel-location="left"] button[aria-label="Scratchpad"]'
+      - wait_for: 'text=Restored from plugin storage'
+      - js: |
+          window.__pluginDemo?.setCaption('Re-enabled: the note survives because storage is scoped to the plugin, not the pane.');
+      - pause: 2.5
+      - screenshot: ../../../../../../docs/plugins/scratchpad/demo/06-reenabled.png
+
+  - name: Closing card
+    do:
+      - js: |
+          window.__pluginDemo?.setCaption('Built entirely on the public PluginContext — zero core scratchpad special-casing.');
+      - pause: 2.6
+      - js: window.__pluginDemo?.setCaption('');
+      - pause: 0.4

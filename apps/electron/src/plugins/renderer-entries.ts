@@ -7,5 +7,8 @@
  */
 
 import type { PluginRendererEntry } from '../renderer/plugins/types'
+import { activate as activateScratchpad } from './scratchpad/renderer'
 
-export const RENDERER_PLUGIN_ENTRIES: Record<string, PluginRendererEntry> = {}
+export const RENDERER_PLUGIN_ENTRIES: Record<string, PluginRendererEntry> = {
+  scratchpad: activateScratchpad,
+}
