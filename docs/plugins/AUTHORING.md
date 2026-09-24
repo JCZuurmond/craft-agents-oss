@@ -321,3 +321,13 @@ Plugins are testable through the framework alone:
 
 Run with `bun test packages/shared/src/plugins` and
 `bun test apps/electron/src/renderer/plugins/__tests__`.
+
+## Product demos (optional)
+
+A plugin can ship auto-generated PR-review demos: keep shot-scraper
+storyboards in `{your-plugin}/demo/storyboards/` and record them with the
+shared tooling in `apps/electron/src/plugins/demo/` (`node record.mjs
+<plugin-id>`), which runs your unmodified plugin on the real renderer runtime
+in a browser page and writes a GIF/WebM per storyboard to
+`docs/plugins/{plugin-id}/demo/`. See
+[`apps/electron/src/plugins/demo/README.md`](../../apps/electron/src/plugins/demo/README.md).
