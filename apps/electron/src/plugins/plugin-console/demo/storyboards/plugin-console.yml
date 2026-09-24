@@ -1,0 +1,89 @@
+output: ../../../../../../docs/plugins/plugin-console/demo/plugin-console-demo.webm
+# The plugin ships defaultEnabled: false — ?enable seeds the user's Settings
+# opt-in, exactly as a persisted plugins.json would. The console activates at
+# startup (onStartup), so it is already buffering events before it is opened.
+url: "http://127.0.0.1:5199/?enable=plugin-console"
+server: exec node ../../../../../../node_modules/vite/bin/vite.js --host 127.0.0.1 --config vite.config.ts
+
+viewport:
+  width: 1280
+  height: 800
+
+cursor:
+  visible: true
+  clicks: true
+  color: "#8b5cf6"
+  size: 16
+  click_size: 42
+
+wait_for: '[data-panel-role="plugin-rail"][data-panel-location="bottom"] button[aria-label="Plugin Console"]'
+
+scenes:
+  - name: Activated at startup
+    do:
+      - js: |
+          window.__pluginDemo?.setCaption(
+            'The Plugin Console activates at startup (onStartup) — it has been observing framework hooks since boot, before its panel ever opened.'
+          );
+      - pause: 2.6
+      - screenshot: ../../../../../../docs/plugins/plugin-console/demo/01-declared-rail.png
+
+  - name: The boot wave was captured
+    do:
+      - click: '[data-panel-role="plugin-rail"][data-panel-location="bottom"] button[aria-label="Plugin Console"]'
+      - wait_for: 'text=app:ready'
+      - js: |
+          window.__pluginDemo?.setCaption(
+            'Opening the bottom panel shows the buffered log: its own activation, app:ready, and this panel:opened — captured through ctx.hooks.'
+          );
+      - pause: 2.8
+      - screenshot: ../../../../../../docs/plugins/plugin-console/demo/02-boot-wave.png
+
+  - name: Another plugin contributes panels
+    do:
+      - js: window.__pluginDemo?.showEdgePanels();
+      # The Terminal takes over the bottom dock (same edge as the console) —
+      # the console keeps buffering while hidden.
+      - wait_for: 'text=$ bun test packages/shared/src/plugins'
+      - js: |
+          window.__pluginDemo?.setCaption(
+            'A second demo plugin docks a Terminal on this edge and Notes on the left — the hidden console keeps buffering every panel:opened.'
+          );
+      - pause: 2.6
+      - screenshot: ../../../../../../docs/plugins/plugin-console/demo/03-live-events.png
+
+  - name: Events keep flowing across edges
+    do:
+      - click: '[data-panel-role="plugin-rail"][data-panel-location="left"] button[aria-label="Notes"]'
+      - pause: 0.8
+      - click: '[data-panel-role="plugin-rail"][data-panel-location="bottom"] button[aria-label="Plugin Console"]'
+      - wait_for: 'text=plugin=edge-demo panel=terminal location=bottom'
+      - wait_for: 'text=plugin=edge-demo panel=notes location=left'
+      - js: |
+          window.__pluginDemo?.setCaption(
+            'Back on the console: left-dock Notes, bottom-dock Terminal, every open and close — one hook stream covers all four edges.'
+          );
+      - pause: 2.8
+      - screenshot: ../../../../../../docs/plugins/plugin-console/demo/04-cross-edge.png
+
+  - name: Clear control
+    do:
+      - click: 'button[aria-label="Clear console"]'
+      - wait_for: 'text=No framework events yet'
+      - js: |
+          window.__pluginDemo?.setCaption('Clear empties the buffer — new events keep streaming in.');
+      - pause: 1.6
+      - click: '[data-panel-role="plugin-rail"][data-panel-location="bottom"] button[aria-label="Terminal"]'
+      - pause: 0.6
+      - click: '[data-panel-role="plugin-rail"][data-panel-location="bottom"] button[aria-label="Plugin Console"]'
+      - wait_for: 'text=plugin=plugin-console panel=console location=bottom'
+      - pause: 1.8
+      - screenshot: ../../../../../../docs/plugins/plugin-console/demo/05-clear-and-stream.png
+
+  - name: Closing card
+    do:
+      - js: |
+          window.__pluginDemo?.setCaption('Built entirely on the public PluginContext — ctx.hooks observation with onStartup activation, zero core special-casing.');
+      - pause: 2.6
+      - js: window.__pluginDemo?.setCaption('');
+      - pause: 0.4

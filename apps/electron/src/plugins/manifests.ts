@@ -13,5 +13,8 @@
  */
 
 import type { PluginManifest } from '@craft-agent/shared/plugins/types'
+import { PLUGIN_CONSOLE_PLUGIN_MANIFEST } from './plugin-console/manifest'
 
-export const BUILTIN_PLUGIN_MANIFESTS: PluginManifest[] = []
+export const BUILTIN_PLUGIN_MANIFESTS: PluginManifest[] = [
+  PLUGIN_CONSOLE_PLUGIN_MANIFEST,
+]
